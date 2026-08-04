@@ -98,3 +98,8 @@ dotnet run --project src/ComicVerse.App/ComicVerse.App.csproj -- --smoke .\sampl
 - WebP/AVIF 图片依赖 Windows 自带编解码器，若系统缺少对应组件会提示「无法解码」
 - EPUB 按章节分页（章节内页码从 1 开始），连续整本页码是后续迭代项
 - 书签仅支持“页/章节”级定位，无批注文本编辑（P1-02 的部分实现）
+
+## 开源许可
+
+ComicVerse 以 [木兰宽松许可证，第 2 版（Mulan PSL v2）](LICENSE) 开源。
+您可以自由使用、复制、修改、分发本软件，并可将修改后的版本以相同或兼容的许可证再发布。

@@ -38,5 +38,10 @@ ComicVerse — 二次元漫画 & 轻小说阅读器（免安装版）
 - 若杀毒软件误报，可将 ComicVerse.exe 加入信任区（本程序不开源时建议自行审计源码）
 
 【版本】
+
+【开源许可】
+本软件以《木兰宽松许可证，第 2 版》（Mulan PSL v2）开源，
+许可全文见项目根目录 LICENSE 文件，或访问：
+  http://license.coscl.org.cn/MulanPSL2
 v1.0.9（书架选中不再框整行；缩放比例数字正确恢复；修复小说进度保存与浅色主题背景）
 · 源码：https://github.com/rearcherr/ComicVerse
