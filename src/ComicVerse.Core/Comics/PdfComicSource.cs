@@ -1,59 +1,79 @@
-using System.Drawing;
-using System.Drawing.Imaging;
 using System.IO;
-using PdfiumViewer;
 
 namespace ComicVerse.Core.Comics;
 
-/// <summary>PDF 漫画源：按页渲染为位图（Pdfium），只渲染当前需要的页。</summary>
+/// <summary>
+/// PDF 漫画源：常规页面整页渲染；超长页（条漫，高度/宽度超过阈值）按段切片，
+/// 每段作为独立一页，避免超出位图尺寸上限（如 560×132842pt 的单页长条漫）。
+/// </summary>
 public sealed class PdfComicSource : IComicSource
 {
-    private readonly PdfDocument _doc;
+    private const int RenderWidthPx = 1600;
+    private const float MaxSliceAspect = 2.2f;
+    private const int MaxSliceHeightPx = 4096;
+
+    private readonly PdfNativeRenderer _renderer;
+    private readonly List<PdfSlice> _slices = new();
 
     public string SourcePath { get; }
-    public int PageCount => _doc.PageCount;
+    public int PageCount => _slices.Count;
 
     public PdfComicSource(string path)
     {
         SourcePath = path;
         try
         {
-            _doc = PdfDocument.Load(path);
-            if (_doc.PageCount == 0)
-                throw new ComicSourceException("PDF 没有页面");
+            _renderer = new PdfNativeRenderer(path);
+            for (int page = 0; page < _renderer.PageCount; page++)
+            {
+                var (pw, ph) = _renderer.GetPageSize(page);
+                if (pw <= 0 || ph <= 0) continue;
+
+                float aspect = ph / pw;
+                int sliceCount = aspect > MaxSliceAspect ? (int)Math.Ceiling(aspect / MaxSliceAspect) : 1;
+                float sliceHeight = ph / sliceCount;
+                for (int s = 0; s < sliceCount; s++)
+                {
+                    _slices.Add(new PdfSlice(page, s * sliceHeight, (s + 1) * sliceHeight, pw, ph));
+                }
+            }
+            if (_slices.Count == 0)
+                throw new ComicSourceException("PDF 页面尺寸无效");
         }
         catch (ComicSourceException)
         {
-            Dispose();
+            _renderer?.Dispose();
             throw;
         }
         catch (Exception ex)
         {
-            Dispose();
+            _renderer?.Dispose();
             throw new ComicSourceException("无法打开 PDF 文件: " + ex.Message, ex);
         }
     }
 
     public Stream GetPageStream(int index)
     {
-        if (index < 0 || index >= _doc.PageCount)
+        if (index < 0 || index >= _slices.Count)
             throw new ArgumentOutOfRangeException(nameof(index));
-
-        var size = _doc.PageSizes[index];
-        const double targetWidth = 1600.0;
-        double scale = Math.Clamp(targetWidth / Math.Max(1.0, size.Width), 0.5, 3.0);
-        int w = Math.Max(64, (int)(size.Width * scale));
-        int h = Math.Max(64, (int)(size.Height * scale));
-
-        using var bmp = _doc.Render(index, w, h, 96, 96, PdfRotation.Rotate0, PdfRenderFlags.Annotations);
-        var ms = new MemoryStream();
-        bmp.Save(ms, ImageFormat.Png);
-        ms.Position = 0;
-        return ms;
+        var slice = _slices[index];
+        int heightPx = Math.Clamp(
+            (int)Math.Round((slice.Y1 - slice.Y0) / slice.PageWidth * RenderWidthPx),
+            64, MaxSliceHeightPx);
+        return new MemoryStream(_renderer.RenderPng(slice.Page, slice.Y0, slice.Y1, RenderWidthPx, heightPx));
     }
 
-    public void Dispose()
+    public (int Width, int Height)? GetPageSize(int index)
     {
-        _doc?.Dispose();
+        if (index < 0 || index >= _slices.Count) return null;
+        var slice = _slices[index];
+        int heightPx = Math.Clamp(
+            (int)Math.Round((slice.Y1 - slice.Y0) / slice.PageWidth * RenderWidthPx),
+            64, MaxSliceHeightPx);
+        return (RenderWidthPx, heightPx);
     }
+
+    public void Dispose() => _renderer?.Dispose();
+
+    private readonly record struct PdfSlice(int Page, float Y0, float Y1, float PageWidth, float PageHeight);
 }

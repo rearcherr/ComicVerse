@@ -32,16 +32,35 @@ public static class SmokeTest
         bool doubleOk = false;
         bool novelReaderOk = false;
         bool pdfReaderOk = false;
+        bool pagingOk = false;
+        bool webtoonScrollOk = false;
+        bool defaultModeOk = false;
+        bool defaultOpensWebtoon = false;
+        double closeSeconds = -1;
+        bool tallWebtoonOk = false;
+        double tallWebtoonSeconds = -1;
         string? comicError = null;
         string readerWebtoonStats = "";
+        int readerWebtoonPages = 0;
 
         if (comic is not null)
         {
             var reader = new ReaderWindow(comic) { ShowInTaskbar = false };
             reader.Show();
             await Task.Delay(1600);
+            reader.TestSwitchToPaged();
+            await Task.Delay(700);
             comicReaderOk = reader.IsComicPageLoaded;
             Capture(reader, Path.Combine(outDir, "reader-paged.png"));
+            // 快速翻页压力测试
+            pagingOk = true;
+            for (int i = 0; i < 4; i++)
+            {
+                reader.TestNext();
+                await Task.Delay(120);
+            }
+            await Task.Delay(600);
+            pagingOk = reader.IsComicPageLoaded;
             try
             {
                 reader.TestSwitchToWebtoon();
@@ -49,6 +68,9 @@ public static class SmokeTest
                 webtoonOk = reader.IsWebtoonReady;
                 readerWebtoonStats = reader.WebtoonStats;
                 Capture(reader, Path.Combine(outDir, "reader-webtoon.png"));
+                reader.TestWebtoonScrollBy(1600);
+                await Task.Delay(900);
+                webtoonScrollOk = reader.IsWebtoonReady && reader.WebtoonRenderedCount > 0;
                 reader.TestSwitchToDouble();
                 await Task.Delay(1400);
                 doubleOk = reader.IsDoubleReady;
@@ -58,7 +80,19 @@ public static class SmokeTest
             {
                 comicError = ex.Message;
             }
+            var closeSw = System.Diagnostics.Stopwatch.StartNew();
             reader.Close();
+            closeSw.Stop();
+            closeSeconds = closeSw.Elapsed.TotalSeconds;
+
+            // 默认阅读方式应为条漫：新建阅读器直接进入条漫
+            defaultModeOk = App.Settings.DefaultComicMode == "webtoon";
+            var reader2 = new ReaderWindow(comic) { ShowInTaskbar = false };
+            reader2.Show();
+            await Task.Delay(2200);
+            defaultOpensWebtoon = reader2.IsWebtoonReady;
+            Capture(reader2, Path.Combine(outDir, "default-webtoon.png"));
+            reader2.Close();
         }
 
         if (novel is not null)
@@ -82,8 +116,34 @@ public static class SmokeTest
                 var reader = new ReaderWindow(pdfBook) { ShowInTaskbar = false };
                 reader.Show();
                 await Task.Delay(2000);
+                reader.TestSwitchToPaged();
+                await Task.Delay(700);
                 pdfReaderOk = reader.IsComicPageLoaded;
                 Capture(reader, Path.Combine(outDir, "reader-pdf.png"));
+                reader.Close();
+            }
+        }
+
+        // 超长条漫 PDF：验证“翻页 → 条漫”切换不卡死（带超时保护）
+        string tallPdf = Environment.GetEnvironmentVariable("COMICVERSE_SMOKE_TALL_PDF") ?? "";
+        if (tallPdf.Length > 0 && File.Exists(tallPdf))
+        {
+            var tallResult = await App.Importer.ImportAsync(new[] { tallPdf });
+            var tallBook = App.Library.GetBookByPath(Path.GetFullPath(tallPdf));
+            if (tallBook is not null)
+            {
+                var reader = new ReaderWindow(tallBook) { ShowInTaskbar = false };
+                reader.Show();
+                await Task.Delay(1500);
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                reader.TestSwitchToWebtoon();
+                while (!reader.IsWebtoonReady && sw.Elapsed < TimeSpan.FromSeconds(20))
+                    await Task.Delay(100);
+                sw.Stop();
+                tallWebtoonSeconds = sw.Elapsed.TotalSeconds;
+                tallWebtoonOk = reader.IsWebtoonReady && reader.WebtoonPageCount > 1;
+                readerWebtoonPages = reader.WebtoonPageCount;
+                Capture(reader, Path.Combine(outDir, "tall-pdf-webtoon.png"));
                 reader.Close();
             }
         }
@@ -96,7 +156,10 @@ public static class SmokeTest
             $"SMOKE 完成 | 样例目录: {samplesDir}\n" +
             $"导入: 新增 {result.Imported}, 更新 {result.Updated}, 失败 {result.Failed.Count}\n" +
             $"书架: {App.Library.GetBooks().Count} 本 (漫画 {comic is not null}, 小说 {novel is not null})\n" +
-            $"漫画翻页: {comicReaderOk} | 条漫: {webtoonOk} | 双页: {doubleOk} | 小说: {novelReaderOk} | PDF: {pdfReaderOk}\n" +
+            $"漫画翻页: {comicReaderOk} | 快速翻页: {pagingOk} | 条漫: {webtoonOk} | 条漫滚动: {webtoonScrollOk} | 双页: {doubleOk} | 小说: {novelReaderOk} | PDF: {pdfReaderOk}\n" +
+            $"默认阅读方式: 条漫={defaultModeOk} 打开即条漫={defaultOpensWebtoon}\n" +
+            $"关闭阅读器耗时: {closeSeconds:F1}s\n" +
+            (tallPdf.Length > 0 ? $"超长 PDF 条漫切换: {tallWebtoonOk}（耗时 {tallWebtoonSeconds:F1}s，页数 {readerWebtoonPages}）\n" : "") +
             (webtoonOk ? "条漫诊断: " + readerWebtoonStats + "\n" : "") +
             (comicError is null ? "" : "异常: " + comicError + "\n") +
             $"截图目录: {outDir}";
@@ -104,7 +167,10 @@ public static class SmokeTest
         Console.WriteLine(summary);
         File.WriteAllText(Path.Combine(outDir, "summary.txt"), summary);
 
-        return comic is not null && novel is not null && comicReaderOk && webtoonOk && doubleOk && novelReaderOk && pdfReaderOk ? 0 : 1;
+        bool tallOk = tallPdf.Length == 0 || tallWebtoonOk;
+        bool closeOk = closeSeconds >= 0 && closeSeconds < 3;
+        return comic is not null && novel is not null && comicReaderOk && pagingOk && webtoonOk && webtoonScrollOk &&
+               doubleOk && novelReaderOk && pdfReaderOk && tallOk && closeOk && defaultModeOk && defaultOpensWebtoon ? 0 : 1;
     }
 
     private static void Capture(Window window, string path)

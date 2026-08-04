@@ -9,14 +9,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="bblanchon.PDFium.Win32" Version="153.0.7988" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
-    <PackageReference Include="PdfiumViewer" Version="2.13.0" />
-    <PackageReference Include="PdfiumViewer.Native.x86_64.v8-xfa" Version="2018.4.8.256" />
     <PackageReference Include="SharpCompress" Version="0.50.3" />
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="$(NuGetPackageRoot)pdfiumviewer.native.x86_64.v8-xfa\2018.4.8.256\Build\x64\pdfium.dll"
+    <EmbeddedResource Include="$(NuGetPackageRoot)bblanchon.pdfium.win32\153.0.7988\runtimes\win-x64\native\pdfium.dll"
                       LogicalName="pdfium.dll" />
   </ItemGroup>
 

@@ -72,11 +72,16 @@ public partial class ReaderWindow : Window
     // 自检钩子（仅在 --smoke 模式下使用）
     internal bool IsComicPageLoaded => _mode == "paged" && PageImage.Source is not null;
     internal bool IsWebtoonReady => _webtoonInitialized && WebtoonView.IsReady && WebtoonView.PageCount > 0;
+    internal int WebtoonPageCount => WebtoonView.PageCount;
     internal bool IsNovelReady => _novel is not null && NovelPaged.Document is not null;
     internal bool IsDoubleReady => _mode == "double" && (LeftImage.Source is not null || RightImage.Source is not null);
     internal string WebtoonStats => $"canvas={WebtoonView.CanvasWidth:F0}x{WebtoonView.CanvasHeight:F0} rendered={WebtoonView.RenderedCount} scale={_zoom:F2}";
     internal void TestSwitchToWebtoon() => ModeWebtoon.IsChecked = true;
     internal void TestSwitchToDouble() => ModeDouble.IsChecked = true;
+    internal void TestSwitchToPaged() => ModePaged.IsChecked = true;
+    internal void TestNext() => Next();
+    internal void TestWebtoonScrollBy(double dy) => WebtoonView.ScrollBy(dy);
+    internal int WebtoonRenderedCount => WebtoonView.RenderedCount;
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
@@ -117,8 +122,19 @@ public partial class ReaderWindow : Window
         var prog = _fromStart ? null : App.Library.GetProgress(_book.Id);
         _page = prog is null ? 0 : Math.Clamp(prog.PageIndex, 0, _loader.PageCount - 1);
         _webtoonFraction = prog?.ScrollOffset ?? 0;
-        ModePaged.IsChecked = true;
-        ShowComicPaged(_page);
+        switch (App.Settings.DefaultComicMode)
+        {
+            case "webtoon":
+                ModeWebtoon.IsChecked = true;
+                break;
+            case "double":
+                ModeDouble.IsChecked = true;
+                break;
+            default:
+                ModePaged.IsChecked = true;
+                ShowComicPaged(_page);
+                break;
+        }
         if (_fromStart) SaveNow();
     }
 
@@ -331,7 +347,7 @@ public partial class ReaderWindow : Window
 
     #region 漫画：条漫
 
-    private void ShowWebtoon()
+    private async void ShowWebtoon()
     {
         _mode = "webtoon";
         WebtoonView.Visibility = Visibility.Visible;
@@ -350,7 +366,8 @@ public partial class ReaderWindow : Window
             };
             double scale = _zoom;
             int start = _page;
-            WebtoonView.Initialize(_loader!, i => _loader!.GetPageSize(i), start, scale);
+            await WebtoonView.InitializeAsync(_loader!, i => _loader!.GetPageSize(i), start, scale);
+            if (_closed || _mode != "webtoon") return;
             Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
             {
                 WebtoonView.EnsureLayout();

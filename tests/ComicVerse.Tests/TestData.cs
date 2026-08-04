@@ -93,13 +93,13 @@ public static class TestData
         }
     }
 
-    public static void MakeMinimalPdf(string path)
+    public static void MakeMinimalPdf(string path, int pageWidth = 612, int pageHeight = 792)
     {
         var objects = new List<string>
         {
             "<< /Type /Catalog /Pages 2 0 R >>",
             "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+            $"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {pageWidth} {pageHeight}] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
             "<< /Length 47 >>\nstream\nBT /F1 24 Tf 72 720 Td (Hello ComicVerse) Tj ET\nendstream",
             "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
         };

@@ -66,6 +66,21 @@
             </Grid>
 
             <TextBlock Style="{StaticResource SectionTitleText}" Text="阅读偏好" Margin="0,26,0,10"/>
+            <Grid Margin="0,0,0,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="120"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="漫画默认阅读方式" Style="{StaticResource BodyText}" VerticalAlignment="Center"/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <RadioButton x:Name="DefaultPagedRadio" Style="{StaticResource SegmentRadio}" Content="翻页" GroupName="DefaultComicMode"
+                                 Margin="0,0,8,0" Checked="DefaultMode_Changed"/>
+                    <RadioButton x:Name="DefaultWebtoonRadio" Style="{StaticResource SegmentRadio}" Content="条漫" GroupName="DefaultComicMode"
+                                 Margin="0,0,8,0" Checked="DefaultMode_Changed"/>
+                    <RadioButton x:Name="DefaultDoubleRadio" Style="{StaticResource SegmentRadio}" Content="双页" GroupName="DefaultComicMode"
+                                 Checked="DefaultMode_Changed"/>
+                </StackPanel>
+            </Grid>
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="120"/>

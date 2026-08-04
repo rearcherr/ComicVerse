@@ -23,6 +23,12 @@ public partial class SettingsWindow : Window
         PrefetchBox.SelectedIndex = prefetch switch { 0 => 0, 1 => 1, 2 => 2, 3 => 3, 4 => 4, 5 => 5, 6 => 6, _ => 7 };
         LowPerfToggle.IsChecked = App.Settings.LowPerformanceMode;
         RtlToggle.IsChecked = App.Settings.MangaRightToLeft;
+        switch (App.Settings.DefaultComicMode)
+        {
+            case "paged": DefaultPagedRadio.IsChecked = true; break;
+            case "double": DefaultDoubleRadio.IsChecked = true; break;
+            default: DefaultWebtoonRadio.IsChecked = true; break;
+        }
     }
 
     private void CacheSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -50,6 +56,14 @@ public partial class SettingsWindow : Window
     {
         if (!IsLoaded) return;
         App.Settings.MangaRightToLeft = RtlToggle.IsChecked == true;
+    }
+
+    private void DefaultMode_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!IsLoaded) return;
+        if (DefaultPagedRadio.IsChecked == true) App.Settings.DefaultComicMode = "paged";
+        else if (DefaultDoubleRadio.IsChecked == true) App.Settings.DefaultComicMode = "double";
+        else App.Settings.DefaultComicMode = "webtoon";
     }
 
     private void OpenDataDir_Click(object sender, RoutedEventArgs e)

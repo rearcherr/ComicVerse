@@ -10,10 +10,11 @@ namespace ComicVerse.Core.Services;
 /// </summary>
 public sealed class ComicImageLoader : IDisposable
 {
-    private readonly IComicSource _source;
+    private IComicSource _source;
     private readonly ImageCacheService _cache;
     private readonly SemaphoreSlim _decodeGate = new(Math.Max(1, Environment.ProcessorCount / 2), Math.Max(1, Environment.ProcessorCount / 2));
     private readonly Dictionary<int, Task<BitmapSource?>> _pending = new();
+    private readonly CancellationTokenSource _cts = new();
     private readonly object _lock = new();
     private readonly int _prefetchCount;
     private volatile bool _disposed;
@@ -38,8 +39,7 @@ public sealed class ComicImageLoader : IDisposable
         if (_disposed || index < 0 || index >= PageCount) return null;
         try
         {
-            using var stream = _source.GetPageStream(index);
-            return ImageHelper.GetDimensions(stream);
+            return _source.GetPageSize(index);
         }
         catch (Exception ex)
         {
@@ -71,11 +71,24 @@ public sealed class ComicImageLoader : IDisposable
         }
 
         if (alreadyPending)
-            return await task.WaitAsync(ct).ConfigureAwait(false);
+        {
+            try
+            {
+                return await task.WaitAsync(ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return null;
+            }
+        }
         try
         {
             var result = await task.ConfigureAwait(false);
             return result;
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
         }
         finally
         {
@@ -95,6 +108,11 @@ public sealed class ComicImageLoader : IDisposable
             bool already;
             lock (_lock) already = _pending.ContainsKey(i);
             if (already) continue;
+            lock (_lock)
+            {
+                // 预取不要挤占当前页请求：在途任务较多时暂停预取
+                if (_pending.Count >= 3) return;
+            }
             _ = GetPageAsync(i).ContinueWith(t =>
             {
                 if (t.IsFaulted)
@@ -105,11 +123,14 @@ public sealed class ComicImageLoader : IDisposable
 
     private async Task<BitmapSource?> DecodeAsync(int index, CancellationToken ct)
     {
-        await _decodeGate.WaitAsync(ct).ConfigureAwait(false);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _cts.Token);
+        bool acquired = false;
         try
         {
+            await _decodeGate.WaitAsync(linked.Token).ConfigureAwait(false);
+            acquired = true;
             ct.ThrowIfCancellationRequested();
-            using var stream = await Task.Run(() => _source.GetPageStream(index), ct).ConfigureAwait(false);
+            using var stream = await Task.Run(() => _source.GetPageStream(index), linked.Token).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
             var img = ImageHelper.DecodeFrozen(stream);
             if (img is not null)
@@ -123,14 +144,40 @@ public sealed class ComicImageLoader : IDisposable
         }
         finally
         {
-            _decodeGate.Release();
+            if (acquired)
+                _decodeGate.Release();
         }
     }
 
     public void Dispose()
     {
+        if (_disposed) return;
         _disposed = true;
-        _source.Dispose();
-        _decodeGate.Dispose();
+        _cts.Cancel();
+
+        Task<BitmapSource?>[] pending;
+        lock (_lock) pending = _pending.Values.ToArray();
+        var source = _source;
+        _source = null!;
+
+        // 等在途解码结束后再释放源，避免渲染未完成时关闭 pdfium 文档导致卡死/崩溃
+        Task.Run(async () =>
+        {
+            try
+            {
+                if (pending.Length > 0)
+                    await Task.WhenAll(pending).WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch
+            {
+            }
+            try
+            {
+                source.Dispose();
+            }
+            catch
+            {
+            }
+        });
     }
 }

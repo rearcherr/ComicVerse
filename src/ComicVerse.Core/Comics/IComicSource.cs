@@ -12,6 +12,9 @@ public interface IComicSource : IDisposable
 
     /// <summary>返回第 index 页（0 起）图片字节流（内存流，调用方负责解码与释放）。</summary>
     Stream GetPageStream(int index);
+
+    /// <summary>获取第 index 页的像素尺寸（尽量轻量：PDF 切片由几何直接计算，图片只读文件头）。</summary>
+    (int Width, int Height)? GetPageSize(int index);
 }
 
 public sealed class ComicSourceException : Exception

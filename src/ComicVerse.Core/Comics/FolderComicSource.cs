@@ -39,6 +39,12 @@ public sealed class FolderComicSource : IComicSource
         return new MemoryStream(File.ReadAllBytes(_files[index]));
     }
 
+    public (int Width, int Height)? GetPageSize(int index)
+    {
+        using var stream = GetPageStream(index);
+        return ImageHelper.GetDimensions(stream);
+    }
+
     public void Dispose()
     {
     }

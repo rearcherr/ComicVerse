@@ -26,6 +26,28 @@ public static class Program
             return 0;
         }
 
+        if (args.Contains("--pdfinfo") && args.Length > 1)
+        {
+            DumpPdfInfo(args[1]);
+            return 0;
+        }
+
+        if (args.Contains("--pdfraw") && args.Length > 1)
+        {
+            ProbePdfRaw(args[1]);
+            return 0;
+        }
+
+        if (args.Contains("--pdfslice") && args.Length > 2)
+        {
+            using var source = new ComicVerse.Core.Comics.PdfComicSource(args[1]);
+            using var stream = source.GetPageStream(0);
+            var img = ImageHelper.DecodeFrozen(stream);
+            File.WriteAllBytes(args[2], ImageHelper.EncodePng(img!));
+            Console.WriteLine($"已导出第 1 片: {img!.PixelWidth}x{img.PixelHeight} -> {args[2]}");
+            return 0;
+        }
+
         string work = Path.Combine(Path.GetTempPath(), "comicverse-tests-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(work);
 
@@ -39,6 +61,7 @@ public static class Program
             Run("文件夹漫画源", () => TestFolderSource(samples.Folder));
             Run("伪 CBR 回退", () => TestFakeCbrFallback(work));
             Run("PDF 漫画源", () => TestPdfSource(samples.Pdf));
+            Run("超长条漫 PDF 切片", () => TestTallPdfSlice(samples.TallPdf));
             Run("TXT 章节解析", () => TestTxtParse(samples.TxtUtf8));
             Run("EPUB 解析", () => TestEpubParse(samples.Epub));
             Run("指纹稳定", () => TestFingerprint(work, samples.Cbz));
@@ -109,6 +132,8 @@ public static class Program
 
         string pdf = Path.Combine(work, "sample.pdf");
         TestData.MakeMinimalPdf(pdf);
+        string tallPdf = Path.Combine(work, "tall.pdf");
+        TestData.MakeMinimalPdf(tallPdf, pageWidth: 100, pageHeight: 10000);
 
         string txtUtf8 = Path.Combine(work, "novel-utf8.txt");
         File.WriteAllText(txtUtf8, "第一卷 序章\n\n这是序章的内容，用来测试小说解析。\n\n第二卷 第一章\n\n第一章正文……\n\n第二章 出发\n\n第二章正文。\n", new UTF8Encoding(false));
@@ -123,10 +148,10 @@ public static class Program
             ("第二章 启程", "<p>第二章：众人收拾行囊，踏上旅程。</p>")
         });
 
-        return new Samples(cbz, tar, folder, pdf, txtUtf8, txtGbk, epub);
+        return new Samples(cbz, tar, folder, pdf, txtUtf8, txtGbk, epub, tallPdf);
     }
 
-    private sealed record Samples(string Cbz, string Tar, string Folder, string Pdf, string TxtUtf8, string TxtGbk, string Epub);
+    private sealed record Samples(string Cbz, string Tar, string Folder, string Pdf, string TxtUtf8, string TxtGbk, string Epub, string TallPdf);
 
     private static void GenerateSamples()
     {
@@ -261,6 +286,21 @@ public static class Program
         }
     }
 
+    private static void TestTallPdfSlice(string path)
+    {
+        using var source = new PdfComicSource(path);
+        // 100 x 10000pt，纵横比 100 → 期望切片数 ceil(100 / 2.2) = 46
+        Assert(source.PageCount == 46, "超长页切片数错误: " + source.PageCount);
+        var size = source.GetPageSize(0);
+        Assert(size is { Width: 1600 }, "切片尺寸快速路径错误: " + size?.Width);
+        Assert(size is { Height: >= 64 and <= 4096 }, "切片尺寸高度越界: " + size?.Height);
+        using var s0 = source.GetPageStream(0);
+        var img = ImageHelper.DecodeFrozen(s0);
+        Assert(img is not null && img.PixelWidth == 1600, "超长页切片渲染失败，宽=" + img?.PixelWidth);
+        Assert(img!.PixelHeight is >= 64 and <= 4096, "切片高度越界: " + img.PixelHeight);
+        Assert(size!.Value.Height == img.PixelHeight, $"快速路径尺寸与渲染尺寸不一致: {size.Value.Height} vs {img.PixelHeight}");
+    }
+
     private static void TestTxtParse(string path)
     {
         var enc = EncodingDetector.Detect(File.ReadAllBytes(path));
@@ -367,5 +407,74 @@ public static class Program
             try { File.Delete(db + "-wal"); } catch { }
             try { File.Delete(db + "-shm"); } catch { }
         }
+    }
+
+    private static void DumpPdfInfo(string path)
+    {
+        Console.WriteLine("PDF: " + path);
+        using var renderer = new ComicVerse.Core.Comics.PdfNativeRenderer(path);
+        Console.WriteLine("PDF 页数: " + renderer.PageCount);
+        for (int i = 0; i < Math.Min(renderer.PageCount, 20); i++)
+        {
+            var s = renderer.GetPageSize(i);
+            Console.WriteLine($"  第 {i + 1} 页: {s.Width} x {s.Height} pt");
+        }
+        using var source = new ComicVerse.Core.Comics.PdfComicSource(path);
+        Console.WriteLine("阅读页数（切片后）: " + source.PageCount);
+        using var first = source.GetPageStream(0);
+        var dim = ImageHelper.GetDimensions(first);
+        Console.WriteLine($"  第一页渲染尺寸: {dim?.Width} x {dim?.Height} px");
+    }
+
+    private static void ProbePdfRaw(string path)
+    {
+        PdfRawProbe.FPDF_InitLibrary();
+        var doc = PdfRawProbe.FPDF_LoadDocument(System.Text.Encoding.UTF8.GetBytes(path + '\0'), null);
+        Console.WriteLine("doc=0x" + doc.ToInt64().ToString("X"));
+        int count = PdfRawProbe.FPDF_GetPageCount(doc);
+        Console.WriteLine("count=" + count);
+        var page = PdfRawProbe.FPDF_LoadPage(doc, 0);
+        Console.WriteLine("page=0x" + page.ToInt64().ToString("X"));
+        double wF = PdfRawProbe.FPDF_GetPageWidthF(page);
+        double hF = PdfRawProbe.FPDF_GetPageHeightF(page);
+        double wOld = PdfRawProbe.FPDF_GetPageWidth(page);
+        double hOld = PdfRawProbe.FPDF_GetPageHeight(page);
+        Console.WriteLine($"widthF={wF} heightF={hF}");
+        Console.WriteLine($"widthOld={wOld} heightOld={hOld}");
+        PdfRawProbe.FPDF_ClosePage(page);
+        PdfRawProbe.FPDF_CloseDocument(doc);
+    }
+
+    private static class PdfRawProbe
+    {
+        [System.Runtime.InteropServices.DllImport("pdfium.dll", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        public static extern void FPDF_InitLibrary();
+
+        [System.Runtime.InteropServices.DllImport("pdfium.dll", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        public static extern IntPtr FPDF_LoadDocument(byte[] pathUtf8, byte[]? password);
+
+        [System.Runtime.InteropServices.DllImport("pdfium.dll", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        public static extern int FPDF_GetPageCount(IntPtr doc);
+
+        [System.Runtime.InteropServices.DllImport("pdfium.dll", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        public static extern IntPtr FPDF_LoadPage(IntPtr doc, int index);
+
+        [System.Runtime.InteropServices.DllImport("pdfium.dll", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        public static extern void FPDF_ClosePage(IntPtr page);
+
+        [System.Runtime.InteropServices.DllImport("pdfium.dll", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        public static extern void FPDF_CloseDocument(IntPtr doc);
+
+        [System.Runtime.InteropServices.DllImport("pdfium.dll", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        public static extern double FPDF_GetPageWidthF(IntPtr page);
+
+        [System.Runtime.InteropServices.DllImport("pdfium.dll", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        public static extern double FPDF_GetPageHeightF(IntPtr page);
+
+        [System.Runtime.InteropServices.DllImport("pdfium.dll", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        public static extern double FPDF_GetPageWidth(IntPtr page);
+
+        [System.Runtime.InteropServices.DllImport("pdfium.dll", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        public static extern double FPDF_GetPageHeight(IntPtr page);
     }
 }

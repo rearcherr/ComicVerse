@@ -44,6 +44,17 @@ public sealed class AppSettingsService
         set => _library.SetSetting("manga_rtl", value ? "1" : "0");
     }
 
+    /// <summary>漫画打开时的默认阅读方式：paged / webtoon / double。</summary>
+    public string DefaultComicMode
+    {
+        get
+        {
+            string v = Get("default_comic_mode", "webtoon");
+            return v is "paged" or "double" ? v : "webtoon";
+        }
+        set => _library.SetSetting("default_comic_mode", value is "paged" or "double" ? value : "webtoon");
+    }
+
     public bool AutoHideBars
     {
         get => Get("auto_hide_bars", "0") == "1";

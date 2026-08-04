@@ -71,24 +71,41 @@ public partial class WebtoonViewer : UserControl
         };
     }
 
-    public void Initialize(ComicImageLoader loader, Func<int, (int W, int H)?> dimProvider, int startPage, double scale)
+    public async Task InitializeAsync(ComicImageLoader loader, Func<int, (int W, int H)?> dimProvider, int startPage, double scale)
     {
+        ShowLoading("正在排版条漫…");
         _loader = loader;
         _scale = Math.Clamp(scale, 0.5, 3.0);
         _lastViewportWidth = -1;
+        _layoutReady = false;
         _dims.Clear();
-        for (int i = 0; i < loader.PageCount; i++)
+        var dims = await Task.Run(() =>
         {
-            var d = dimProvider(i);
-            _dims.Add(d ?? (800, 1200));
-        }
+            var list = new List<(int W, int H)>(loader.PageCount);
+            for (int i = 0; i < loader.PageCount; i++)
+            {
+                var d = dimProvider(i);
+                list.Add(d ?? (800, 1200));
+            }
+            return list;
+        }).ConfigureAwait(true);
+        _dims.AddRange(dims);
         Rebuild();
         _lastViewportWidth = Scroll.ViewportWidth;
-        ScrollToPage(Math.Clamp(startPage, 0, Math.Max(0, _dims.Count - 1)));
         _layoutReady = true;
+        ScrollToPage(Math.Clamp(startPage, 0, Math.Max(0, _dims.Count - 1)));
         NotifyCurrent();
+        HideLoading();
         LayoutReady?.Invoke();
     }
+
+    internal void ShowLoading(string text)
+    {
+        LoadingText.Text = text;
+        LoadingOverlay.Visibility = Visibility.Visible;
+    }
+
+    internal void HideLoading() => LoadingOverlay.Visibility = Visibility.Collapsed;
 
     public void ScrollToPage(int index)
     {
