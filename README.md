@@ -71,6 +71,8 @@ $env:SMOKE_OUT_DIR = "$env:TEMP\cv-smoke-out"
 dotnet run --project src/ComicVerse.App/ComicVerse.App.csproj -- --smoke .\samples
 ```
 
+推送 `v*` 标签会自动触发 GitHub Actions 构建并发布免安装版制品到 Release。
+
 ## 快捷键
 
 | 按键 | 功能 |

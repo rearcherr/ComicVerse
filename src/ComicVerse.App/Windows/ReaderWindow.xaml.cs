@@ -82,6 +82,13 @@ public partial class ReaderWindow : Window
     internal void TestNext() => Next();
     internal void TestWebtoonScrollBy(double dy) => WebtoonView.ScrollBy(dy);
     internal int WebtoonRenderedCount => WebtoonView.RenderedCount;
+    internal void TestSetZoom(double z)
+    {
+        _zoom = Math.Clamp(z, 0.5, 3.0);
+        _fitMode = "custom";
+        ZoomSlider.Value = _zoom * 100;
+    }
+    internal double CurrentZoom => _mode == "webtoon" ? _zoom : PageScale.ScaleX;
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
@@ -122,18 +129,42 @@ public partial class ReaderWindow : Window
         var prog = _fromStart ? null : App.Library.GetProgress(_book.Id);
         _page = prog is null ? 0 : Math.Clamp(prog.PageIndex, 0, _loader.PageCount - 1);
         _webtoonFraction = prog?.ScrollOffset ?? 0;
-        switch (App.Settings.DefaultComicMode)
+        if (prog is { Zoom: > 0 })
         {
-            case "webtoon":
-                ModeWebtoon.IsChecked = true;
-                break;
-            case "double":
-                ModeDouble.IsChecked = true;
-                break;
-            default:
-                ModePaged.IsChecked = true;
-                ShowComicPaged(_page);
-                break;
+            _zoom = Math.Clamp(prog.Zoom, 0.5, 3.0);
+            _fitMode = "custom";
+            ZoomSlider.Value = _zoom * 100;
+        }
+
+        string savedMode = _fromStart ? "" : (prog?.Mode ?? "");
+        if (savedMode == "webtoon")
+        {
+            ModeWebtoon.IsChecked = true;
+        }
+        else if (savedMode == "double")
+        {
+            ModeDouble.IsChecked = true;
+        }
+        else if (savedMode == "paged")
+        {
+            ModePaged.IsChecked = true;
+            ShowComicPaged(_page);
+        }
+        else
+        {
+            switch (App.Settings.DefaultComicMode)
+            {
+                case "webtoon":
+                    ModeWebtoon.IsChecked = true;
+                    break;
+                case "double":
+                    ModeDouble.IsChecked = true;
+                    break;
+                default:
+                    ModePaged.IsChecked = true;
+                    ShowComicPaged(_page);
+                    break;
+            }
         }
         if (_fromStart) SaveNow();
     }
@@ -424,13 +455,12 @@ public partial class ReaderWindow : Window
         ScheduleSave();
     }
 
-    private static void FitDoubleImage(Image image, System.Windows.Media.Imaging.BitmapSource? bmp)
+    private void FitDoubleImage(Image image, System.Windows.Media.Imaging.BitmapSource? bmp)
     {
         if (bmp is null) return;
         double targetW = image.Parent is ScrollViewer sv ? Math.Max(50, sv.ViewportWidth) : 800;
-        double scale = Math.Min(3.0, Math.Max(0.1, targetW / bmp.PixelWidth));
-        image.Width = bmp.PixelWidth * scale;
-        image.Height = bmp.PixelHeight * scale;
+        image.Width = targetW * _zoom;
+        image.Height = bmp.PixelHeight * (image.Width / Math.Max(1, bmp.PixelWidth));
     }
 
     #endregion
@@ -940,9 +970,14 @@ public partial class ReaderWindow : Window
             percent = _book.Progress;
         }
 
+        string mode = _mode;
+        double zoom = 0;
+        if (_mode == "webtoon") zoom = _zoom;
+        else if (_mode is "paged" or "double") zoom = Math.Round(PageScale.ScaleX, 3);
+
         try
         {
-            App.Library.SaveProgress(_book.Id, percent, page, scroll, chapter);
+            App.Library.SaveProgress(_book.Id, percent, page, scroll, chapter, mode, zoom);
         }
         catch (Exception ex)
         {
@@ -993,8 +1028,9 @@ public partial class ReaderWindow : Window
 
     private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
     {
-        _closed = true;
+        // 先保存（含模式/缩放），再标记关闭，避免 SaveNow 被提前拦截
         SaveNow();
+        _closed = true;
         _saveTimer.Stop();
         _autoScrollTimer?.Stop();
         _hideBarsTimer?.Stop();

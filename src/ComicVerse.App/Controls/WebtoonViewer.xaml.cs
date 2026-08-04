@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using ComicVerse.Core.Services;
 
 namespace ComicVerse.App.Controls;
@@ -106,6 +107,20 @@ public partial class WebtoonViewer : UserControl
     }
 
     internal void HideLoading() => LoadingOverlay.Visibility = Visibility.Collapsed;
+
+    private void OnPreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        {
+            // Ctrl+滚轮：缩放
+            ScaleFactor *= 1 + e.Delta / 1200.0;
+            e.Handled = true;
+            return;
+        }
+        // 滚轮滚动加速（默认 3 行 ≈ 48px，这里按 2.5 倍）
+        Scroll.ScrollToVerticalOffset(Scroll.VerticalOffset - e.Delta * 2.5);
+        e.Handled = true;
+    }
 
     public void ScrollToPage(int index)
     {

@@ -47,6 +47,8 @@ public sealed class LibraryService : IDisposable
                 page_index INTEGER NOT NULL DEFAULT 0,
                 scroll REAL NOT NULL DEFAULT 0,
                 chapter_index INTEGER NOT NULL DEFAULT 0,
+                mode TEXT NOT NULL DEFAULT '',
+                zoom REAL NOT NULL DEFAULT 0,
                 updated TEXT NOT NULL,
                 FOREIGN KEY(book_id) REFERENCES books(id) ON DELETE CASCADE
             );
@@ -67,6 +69,21 @@ public sealed class LibraryService : IDisposable
             CREATE INDEX IF NOT EXISTS idx_books_last_read ON books(last_read);
             """;
         cmd.ExecuteNonQuery();
+
+        // 旧库迁移：补充 mode / zoom 列
+        foreach (string column in new[] { "mode TEXT NOT NULL DEFAULT ''", "zoom REAL NOT NULL DEFAULT 0" })
+        {
+            try
+            {
+                using var alter = _conn.CreateCommand();
+                alter.CommandText = "ALTER TABLE progress ADD COLUMN " + column;
+                alter.ExecuteNonQuery();
+            }
+            catch
+            {
+                // 列已存在则忽略
+            }
+        }
     }
 
     public Book? GetBook(long id)
@@ -166,7 +183,7 @@ public sealed class LibraryService : IDisposable
     public ReadingProgress? GetProgress(long bookId)
     {
         using var cmd = _conn.CreateCommand();
-        cmd.CommandText = "SELECT page_index, scroll, chapter_index, updated FROM progress WHERE book_id=$id";
+        cmd.CommandText = "SELECT page_index, scroll, chapter_index, mode, zoom, updated FROM progress WHERE book_id=$id";
         cmd.Parameters.AddWithValue("$id", bookId);
         using var r = cmd.ExecuteReader();
         if (!r.Read()) return null;
@@ -176,25 +193,30 @@ public sealed class LibraryService : IDisposable
             PageIndex = r.GetInt32(0),
             ScrollOffset = r.GetDouble(1),
             ChapterIndex = r.GetInt32(2),
-            UpdatedAt = DateTime.TryParse(r.GetString(3), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var d) ? d : DateTime.Now
+            Mode = r.IsDBNull(3) ? "" : r.GetString(3),
+            Zoom = r.IsDBNull(4) ? 0 : r.GetDouble(4),
+            UpdatedAt = DateTime.TryParse(r.GetString(5), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var d) ? d : DateTime.Now
         };
     }
 
-    public void SaveProgress(long bookId, double progress, int pageIndex, double scroll, int chapterIndex)
+    public void SaveProgress(long bookId, double progress, int pageIndex, double scroll, int chapterIndex,
+        string mode = "", double zoom = 0)
     {
         var now = DateTime.Now;
         using var cmd = _conn.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO progress(book_id, page_index, scroll, chapter_index, updated)
-            VALUES($id, $pi, $sc, $ci, $up)
+            INSERT INTO progress(book_id, page_index, scroll, chapter_index, mode, zoom, updated)
+            VALUES($id, $pi, $sc, $ci, $mo, $zo, $up)
             ON CONFLICT(book_id) DO UPDATE SET
-                page_index=$pi, scroll=$sc, chapter_index=$ci, updated=$up;
+                page_index=$pi, scroll=$sc, chapter_index=$ci, mode=$mo, zoom=$zo, updated=$up;
             UPDATE books SET progress=$pr, last_read=$up WHERE id=$id
             """;
         cmd.Parameters.AddWithValue("$id", bookId);
         cmd.Parameters.AddWithValue("$pi", pageIndex);
         cmd.Parameters.AddWithValue("$sc", scroll);
         cmd.Parameters.AddWithValue("$ci", chapterIndex);
+        cmd.Parameters.AddWithValue("$mo", mode);
+        cmd.Parameters.AddWithValue("$zo", zoom);
         cmd.Parameters.AddWithValue("$up", now.ToString("o", CultureInfo.InvariantCulture));
         cmd.Parameters.AddWithValue("$pr", progress);
         cmd.ExecuteNonQuery();

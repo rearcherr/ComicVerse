@@ -62,6 +62,8 @@ public sealed class ReadingProgress
     public int PageIndex { get; set; }
     public double ScrollOffset { get; set; }
     public int ChapterIndex { get; set; }
+    public string Mode { get; set; } = "";
+    public double Zoom { get; set; }
     public DateTime UpdatedAt { get; set; }
 }
 

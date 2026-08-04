@@ -383,9 +383,10 @@ public static class Program
             var novel = books.First(b => b.Type == BookType.Novel && b.Format == BookFormat.Txt);
             Assert(novel.ChapterCount == 3, "小说章节数未入库: " + novel.ChapterCount);
 
-            lib.SaveProgress(comic.Id, 0.42, 4, 0, 0);
+            lib.SaveProgress(comic.Id, 0.42, 4, 0, 0, "webtoon", 1.5);
             var restored = lib.GetProgress(comic.Id);
-            Assert(restored is not null && restored.PageIndex == 4, "进度恢复失败");
+            Assert(restored is not null && restored.PageIndex == 4 && restored.Mode == "webtoon"
+                && Math.Abs(restored.Zoom - 1.5) < 0.01, "进度恢复失败（含模式/缩放）");
             var recent = lib.GetRecent(10);
             Assert(recent.Count == 1 && recent[0].Id == comic.Id, "最近阅读排序错误");
             var fresh = lib.GetBook(comic.Id);
