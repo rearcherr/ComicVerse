@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Threading;
 using System.Windows.Threading;
 using ComicVerse.Core.Services;
 
@@ -23,6 +24,9 @@ public partial class WebtoonViewer : UserControl
     private double _lastViewportWidth = -1;
     private double _scrollTarget = double.NaN;
     private int _pendingIndex = -1;
+    private CancellationTokenSource? _renderCts;
+    private int _visibleFirst = -1;
+    private int _visibleLast = -1;
     private bool _smoothing;
     private DispatcherTimer? _smoothTimer;
 
@@ -54,6 +58,7 @@ public partial class WebtoonViewer : UserControl
     internal double CanvasWidth => RootCanvas.Width;
     internal double CanvasHeight => RootCanvas.Height;
     internal int RenderedCount => _rendered.Count;
+    internal int RenderedWithSourceCount => _rendered.Values.Count(img => img.Source is not null);
 
     internal void EnsureLayout()
     {
@@ -102,7 +107,9 @@ public partial class WebtoonViewer : UserControl
         Rebuild();
         _lastViewportWidth = Scroll.ViewportWidth;
         _layoutReady = true;
-        int start = _pendingIndex >= 0 ? _pendingIndex : Math.Clamp(startPage, 0, Math.Max(0, _dims.Count - 1));
+        int start = _pendingIndex >= 0
+            ? Math.Clamp(_pendingIndex, 0, Math.Max(0, _dims.Count - 1))
+            : Math.Clamp(startPage, 0, Math.Max(0, _dims.Count - 1));
         _pendingIndex = -1;
         ScrollToPage(start);
         NotifyCurrent();
@@ -176,7 +183,7 @@ public partial class WebtoonViewer : UserControl
         if (!_layoutReady || _tops.Count == 0)
         {
             // 条漫尚未完成排版时先记下目标页，初始化完成后跳过去
-            _pendingIndex = Math.Clamp(index, 0, Math.Max(0, _dims.Count - 1));
+            _pendingIndex = index;
             return;
         }
         _pendingIndex = -1;
@@ -202,6 +209,9 @@ public partial class WebtoonViewer : UserControl
     private void Rebuild()
     {
         _buildVersion++;
+        _renderCts?.Cancel();
+        _visibleFirst = -1;
+        _visibleLast = -1;
         long version = _buildVersion;
         double s = _scale;
         double canvasW = Math.Max(1, Scroll.ViewportWidth) * s;
@@ -238,6 +248,13 @@ public partial class WebtoonViewer : UserControl
         double bottom = Scroll.VerticalOffset + Scroll.ViewportHeight * 2;
         int first = Math.Max(0, BinarySearch(_tops, top));
         int last = Math.Min(_dims.Count - 1, BinarySearch(_tops, bottom));
+        if (first == _visibleFirst && last == _visibleLast) return;
+        _visibleFirst = first;
+        _visibleLast = last;
+
+        // 视口变化时取消上一批未完成的解码，避免滚动/跳页时任务堆积
+        _renderCts?.Cancel();
+        var cts = _renderCts = new CancellationTokenSource();
 
         foreach (var kv in _rendered.Where(kv => kv.Key < first || kv.Key > last).ToList())
         {
@@ -258,22 +275,29 @@ public partial class WebtoonViewer : UserControl
             RootCanvas.Children.Add(img);
             _rendered[i] = img;
             int idx = i;
-            _ = LoadAsync(idx, img, version);
+            _ = LoadAsync(idx, img, version, cts.Token);
         }
     }
 
-    private async Task LoadAsync(int index, Image img, long version)
+    private async Task LoadAsync(int index, Image img, long version, CancellationToken ct)
     {
         if (_loader is null) return;
-        var bmp = await _loader.GetPageAsync(index).ConfigureAwait(true);
-        if (version != _buildVersion) return;
-        if (bmp is null)
+        var bmp = await _loader.GetPageAsync(index, ct).ConfigureAwait(true);
+        if (version != _buildVersion || ct.IsCancellationRequested) return;
+        if (bmp is null && !ct.IsCancellationRequested)
         {
             // 瞬时解码失败重试一次，避免条漫出现整条白屏
-            await Task.Delay(150);
-            if (version != _buildVersion) return;
-            bmp = await _loader.GetPageAsync(index).ConfigureAwait(true);
-            if (version != _buildVersion) return;
+            try
+            {
+                await Task.Delay(150, ct);
+                if (version != _buildVersion || ct.IsCancellationRequested) return;
+                bmp = await _loader.GetPageAsync(index, ct).ConfigureAwait(true);
+                if (version != _buildVersion || ct.IsCancellationRequested) return;
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
         }
         img.Source = bmp;
     }

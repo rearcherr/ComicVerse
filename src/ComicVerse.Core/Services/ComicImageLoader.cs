@@ -54,45 +54,56 @@ public sealed class ComicImageLoader : IDisposable
         var cached = _cache.Get(index);
         if (cached is not null) return cached;
 
-        Task<BitmapSource?> task;
-        bool alreadyPending;
-        lock (_lock)
+        int staleRetries = 0;
+        while (true)
         {
-            if (_pending.TryGetValue(index, out task!))
+            Task<BitmapSource?> task;
+            bool alreadyPending;
+            lock (_lock)
             {
-                alreadyPending = true;
+                if (_pending.TryGetValue(index, out task!))
+                {
+                    alreadyPending = true;
+                }
+                else
+                {
+                    alreadyPending = false;
+                    task = DecodeAsync(index, ct);
+                    _pending[index] = task;
+                }
             }
-            else
-            {
-                alreadyPending = false;
-                task = DecodeAsync(index, ct);
-                _pending[index] = task;
-            }
-        }
 
-        if (alreadyPending)
-        {
+            BitmapSource? result;
             try
             {
-                return await task.WaitAsync(ct).ConfigureAwait(false);
+                result = alreadyPending
+                    ? await task.WaitAsync(ct).ConfigureAwait(false)
+                    : await task.ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
-                return null;
+                if (ct.IsCancellationRequested) return null;
+                result = null;
             }
-        }
-        try
-        {
-            var result = await task.ConfigureAwait(false);
-            return result;
-        }
-        catch (OperationCanceledException)
-        {
-            return null;
-        }
-        finally
-        {
-            lock (_lock) _pending.Remove(index);
+
+            if (result is not null)
+            {
+                lock (_lock)
+                {
+                    if (_pending.TryGetValue(index, out var t) && ReferenceEquals(t, task))
+                        _pending.Remove(index);
+                }
+                return result;
+            }
+
+            // 等到的是被取消或解码失败的陈旧任务：移除后重新解码一次，避免跳页后误报加载失败
+            lock (_lock)
+            {
+                if (_pending.TryGetValue(index, out var t) && ReferenceEquals(t, task))
+                    _pending.Remove(index);
+            }
+            if (++staleRetries > 1)
+                return null;
         }
     }
 

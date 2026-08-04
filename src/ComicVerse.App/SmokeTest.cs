@@ -1,4 +1,6 @@
 using System.IO;
+using System.Globalization;
+using System.IO.Compression;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -23,8 +25,14 @@ public static class SmokeTest
         main.Refresh();
 
         var result = await App.Importer.ImportAsync(new[] { samplesDir });
+        // 现场生成一本 30 页长漫画，用于真实覆盖“进度条远距离跳页”
+        string longCbz = CreateLongComic(outDir);
+        var longResult = await App.Importer.ImportAsync(new[] { longCbz });
+        result.Imported += longResult.Imported;
+        result.Updated += longResult.Updated;
+        result.Failed.AddRange(longResult.Failed);
         main.Refresh();
-        var comic = App.Library.GetBooks(filter: "comic").FirstOrDefault();
+        var comic = App.Library.GetBooks(filter: "comic").OrderByDescending(b => b.PageCount).FirstOrDefault();
         var novel = App.Library.GetBooks(filter: "novel").FirstOrDefault();
 
         bool comicReaderOk = false;
@@ -36,6 +44,7 @@ public static class SmokeTest
         bool webtoonScrollOk = false;
         bool farJumpOk = false;
         bool webtoonFarJumpOk = false;
+        int farJumpPage = -1;
         bool defaultModeOk = false;
         bool defaultOpensWebtoon = false;
         bool modePersisted = false;
@@ -71,13 +80,15 @@ public static class SmokeTest
             await Task.Delay(600);
             pagingOk = reader.IsComicPageLoaded;
             // 远距离跳页：连续快速跳到靠后页，末页不应白屏
-            reader.TestJumpToPage(9);
+            int farLast = reader.ComicPageCount - 1;
+            reader.TestJumpToPage(farLast);
             await Task.Delay(100);
-            reader.TestJumpToPage(7);
+            reader.TestJumpToPage(Math.Max(0, farLast - 2));
             await Task.Delay(100);
-            reader.TestJumpToPage(9);
+            reader.TestJumpToPage(farLast);
             await Task.Delay(1000);
-            farJumpOk = reader.IsComicPageLoaded;
+            farJumpPage = reader.CurrentPageNumber;
+            farJumpOk = reader.IsComicPageLoaded && farJumpPage == farLast;
             Capture(reader, Path.Combine(outDir, "reader-far-jump.png"));
             try
             {
@@ -89,9 +100,16 @@ public static class SmokeTest
                 reader.TestWebtoonScrollBy(1600);
                 await Task.Delay(900);
                 webtoonScrollOk = reader.IsWebtoonReady && reader.WebtoonRenderedCount > 0;
-                reader.TestWebtoonJumpTo(reader.WebtoonPageCount - 1);
-                await Task.Delay(1200);
-                webtoonFarJumpOk = reader.IsWebtoonReady && reader.WebtoonRenderedCount > 0;
+                // 模拟拖动进度条：连续快速跳到靠后页，再落到末页
+                int last = reader.WebtoonPageCount - 1;
+                for (int i = 4; i >= 0; i--)
+                {
+                    reader.TestWebtoonJumpTo(Math.Max(0, last - i));
+                    await Task.Delay(50);
+                }
+                await Task.Delay(1500);
+                webtoonFarJumpOk = reader.IsWebtoonReady && reader.WebtoonRenderedCount > 0
+                    && reader.WebtoonRenderedLoadedCount > 0 && reader.CurrentPageNumber == last;
                 Capture(reader, Path.Combine(outDir, "reader-webtoon-far-jump.png"));
                 reader.TestSwitchToDouble();
                 await Task.Delay(1400);
@@ -216,7 +234,7 @@ public static class SmokeTest
             $"SMOKE 完成 | 样例目录: {samplesDir}\n" +
             $"导入: 新增 {result.Imported}, 更新 {result.Updated}, 失败 {result.Failed.Count}\n" +
             $"书架: {App.Library.GetBooks().Count} 本 (漫画 {comic is not null}, 小说 {novel is not null})\n" +
-            $"漫画翻页: {comicReaderOk} | 快速翻页: {pagingOk} | 远跳: {farJumpOk} | 条漫: {webtoonOk} | 条漫滚动: {webtoonScrollOk} | 条漫远跳: {webtoonFarJumpOk} | 双页: {doubleOk} | 小说: {novelReaderOk} | PDF: {pdfReaderOk}\n" +
+            $"漫画翻页: {comicReaderOk} | 快速翻页: {pagingOk} | 远跳: {farJumpOk} (页 {farJumpPage}) | 条漫: {webtoonOk} | 条漫滚动: {webtoonScrollOk} | 条漫远跳: {webtoonFarJumpOk} | 双页: {doubleOk} | 小说: {novelReaderOk} | PDF: {pdfReaderOk}\n" +
             $"默认阅读方式: 条漫={defaultModeOk} 打开即条漫={defaultOpensWebtoon}\n" +
             $"按书记忆: 翻页模式={modePersisted} 缩放150%={zoomPersisted} 比例数字={zoomTextRestored}\n" +
             $"缩放同步: 比例数字={zoomTextSyncOk}\n" +
@@ -250,5 +268,42 @@ public static class SmokeTest
         enc.Frames.Add(BitmapFrame.Create(rtb));
         using var fs = File.Create(path);
         enc.Save(fs);
+    }
+
+    private static string CreateLongComic(string outDir)
+    {
+        string dir = Path.Combine(outDir, "long-gen");
+        Directory.CreateDirectory(dir);
+        var pages = new List<string>();
+        for (int i = 1; i <= 30; i++)
+        {
+            string p = Path.Combine(dir, $"p{i:000}.png");
+            var visual = new DrawingVisual();
+            using (var dc = visual.RenderOpen())
+            {
+                dc.DrawRectangle(new SolidColorBrush(Color.FromRgb((byte)(30 + i * 7), 60, 200)), null, new Rect(0, 0, 480, 880));
+                var ft = new FormattedText($"P{i}", CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+                    new Typeface("Arial"), 28, System.Windows.Media.Brushes.White, 1.0);
+                dc.DrawText(ft, new Point(24, 420));
+            }
+            var rtb = new RenderTargetBitmap(480, 880, 96, 96, PixelFormats.Pbgra32);
+            rtb.Render(visual);
+            var enc = new PngBitmapEncoder();
+            enc.Frames.Add(BitmapFrame.Create(rtb));
+            using var fs = File.Create(p);
+            enc.Save(fs);
+            pages.Add(p);
+        }
+        string cbz = Path.Combine(outDir, "long-comic.cbz");
+        using var cz = File.Create(cbz);
+        using var zip = new ZipArchive(cz, ZipArchiveMode.Create);
+        for (int i = 0; i < pages.Count; i++)
+        {
+            var entry = zip.CreateEntry($"pages/p{i + 1:000}.png", CompressionLevel.Optimal);
+            using var es = entry.Open();
+            using var ist = File.OpenRead(pages[i]);
+            ist.CopyTo(es);
+        }
+        return cbz;
     }
 }

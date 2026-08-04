@@ -12,6 +12,7 @@ public sealed class RarComicSource : IComicSource
     private readonly FileStream _fs;
     private readonly IArchive _archive;
     private readonly List<IArchiveEntry> _entries;
+    private readonly object _readLock = new();
 
     public string SourcePath { get; }
     public int PageCount => _entries.Count;
@@ -46,11 +47,14 @@ public sealed class RarComicSource : IComicSource
     {
         if (index < 0 || index >= _entries.Count)
             throw new ArgumentOutOfRangeException(nameof(index));
-        using var s = _entries[index].OpenEntryStream();
-        var ms = new MemoryStream();
-        s.CopyTo(ms);
-        ms.Position = 0;
-        return ms;
+        lock (_readLock)
+        {
+            using var s = _entries[index].OpenEntryStream();
+            var ms = new MemoryStream();
+            s.CopyTo(ms);
+            ms.Position = 0;
+            return ms;
+        }
     }
 
     public (int Width, int Height)? GetPageSize(int index)

@@ -11,6 +11,7 @@ public sealed class TarComicSource : IComicSource
 {
     private readonly FileStream _fs;
     private readonly List<TarEntry> _entries;
+    private readonly object _readLock = new();
 
     public string SourcePath { get; }
     public int PageCount => _entries.Count;
@@ -103,20 +104,24 @@ public sealed class TarComicSource : IComicSource
     {
         if (index < 0 || index >= _entries.Count)
             throw new ArgumentOutOfRangeException(nameof(index));
-        var entry = _entries[index];
-        _fs.Position = entry.HeaderOffset + 512;
-        var ms = new MemoryStream((int)Math.Min(entry.Size, int.MaxValue));
-        byte[] buffer = new byte[1 << 16];
-        long remaining = entry.Size;
-        while (remaining > 0)
+        // 共享 FileStream 并发定位/读取会互相覆盖 Position，导致读到损坏数据
+        lock (_readLock)
         {
-            int read = _fs.Read(buffer, 0, (int)Math.Min(buffer.Length, remaining));
-            if (read <= 0) break;
-            ms.Write(buffer, 0, read);
-            remaining -= read;
+            var entry = _entries[index];
+            _fs.Position = entry.HeaderOffset + 512;
+            var ms = new MemoryStream((int)Math.Min(entry.Size, int.MaxValue));
+            byte[] buffer = new byte[1 << 16];
+            long remaining = entry.Size;
+            while (remaining > 0)
+            {
+                int read = _fs.Read(buffer, 0, (int)Math.Min(buffer.Length, remaining));
+                if (read <= 0) break;
+                ms.Write(buffer, 0, read);
+                remaining -= read;
+            }
+            ms.Position = 0;
+            return ms;
         }
-        ms.Position = 0;
-        return ms;
     }
 
     public (int Width, int Height)? GetPageSize(int index)

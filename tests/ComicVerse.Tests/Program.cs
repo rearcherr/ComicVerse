@@ -345,6 +345,16 @@ public static class Program
         var results = Task.WhenAll(tasks).GetAwaiter().GetResult();
         Assert(results[^1] is not null, "远距离跳页后末页为 null（白屏）");
         Assert(loader.GetCached(119) is not null, "远距离跳页后末页未入缓存");
+
+        // 同一页的请求被取消后，再次请求同一页必须能重新解码，而不是复用已取消的任务
+        using (var cancelSame = new CancellationTokenSource())
+        {
+            var first = loader.GetPageAsync(60, cancelSame.Token);
+            cancelSame.Cancel();
+            try { first.GetAwaiter().GetResult(); } catch { }
+            var again = loader.GetPageAsync(60).GetAwaiter().GetResult();
+            Assert(again is not null, "同一页被取消后再请求返回 null（复用了已取消任务）");
+        }
     }
 
     private static void TestTxtParse(string path)

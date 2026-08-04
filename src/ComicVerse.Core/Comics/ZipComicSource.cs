@@ -9,6 +9,7 @@ public sealed class ZipComicSource : IComicSource
     private readonly FileStream _fs;
     private readonly ZipArchive _zip;
     private readonly List<ZipArchiveEntry> _entries;
+    private readonly object _readLock = new();
 
     public string SourcePath { get; }
     public int PageCount => _entries.Count;
@@ -44,11 +45,16 @@ public sealed class ZipComicSource : IComicSource
     {
         if (index < 0 || index >= _entries.Count)
             throw new ArgumentOutOfRangeException(nameof(index));
-        using var entryStream = _entries[index].Open();
-        var ms = new MemoryStream();
-        entryStream.CopyTo(ms);
-        ms.Position = 0;
-        return ms;
+        // ZipArchive 及其底层 FileStream 不是线程安全的：并发读取同一压缩包会损坏条目流
+        // （local file header is corrupt / 不支持的压缩方式），导致解码失败白屏。
+        lock (_readLock)
+        {
+            using var entryStream = _entries[index].Open();
+            var ms = new MemoryStream();
+            entryStream.CopyTo(ms);
+            ms.Position = 0;
+            return ms;
+        }
     }
 
     public (int Width, int Height)? GetPageSize(int index)

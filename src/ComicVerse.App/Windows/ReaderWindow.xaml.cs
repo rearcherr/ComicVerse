@@ -87,6 +87,9 @@ public partial class ReaderWindow : Window
     internal void TestJumpToPage(int page) => LoadPageAsync(page);
     internal void TestWebtoonJumpTo(int page) => WebtoonView.ScrollToPage(page);
     internal int WebtoonRenderedCount => WebtoonView.RenderedCount;
+    internal int WebtoonRenderedLoadedCount => WebtoonView.RenderedWithSourceCount;
+    internal int CurrentPageNumber => _page;
+    internal int ComicPageCount => _loader?.PageCount ?? 0;
     internal void TestSetZoom(double z)
     {
         _zoom = Math.Clamp(z, 0.2, 3.0);
@@ -444,6 +447,7 @@ public partial class ReaderWindow : Window
             WebtoonView.ScaleChanged += OnWebtoonScaleChanged;
             WebtoonView.CurrentPageChanged += idx =>
             {
+                if (_mode != "webtoon") return; // 条漫不可见时忽略滚动事件，避免覆盖翻页/双页的页码
                 _page = idx;
                 PageInfoText.Text = $"{idx + 1} / {_loader!.PageCount}";
                 SetSlider((double)(idx + 1 + WebtoonView.ScrollFraction) / _loader.PageCount);
@@ -1099,8 +1103,14 @@ public partial class ReaderWindow : Window
 
     private void ProgressSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
-        if (_updatingSlider || !_sliderActive || !IsLoaded) return;
-        double fraction = e.NewValue / 1000.0;
+        if (_updatingSlider || _sliderActive || !IsLoaded) return;
+        ApplySliderJump();
+    }
+
+    private void ApplySliderJump()
+    {
+        if (_updatingSlider || !IsLoaded) return;
+        double fraction = ProgressSlider.Value / 1000.0;
         if (_mode == "novel")
         {
             int chapter = (int)(fraction * _novel!.Chapters.Count);
@@ -1307,6 +1317,8 @@ public partial class ReaderWindow : Window
     private void ProgressSlider_PreviewMouseUp(object sender, MouseButtonEventArgs e)
     {
         _sliderActive = false;
+        // 拖动进度条过程中只记录位置，松手时才真正跳页，避免中间位置触发大量解码
+        ApplySliderJump();
     }
 
     #endregion
