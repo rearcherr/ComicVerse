@@ -326,7 +326,7 @@
                     </Button>
                     <TextBlock x:Name="ZoomText" Text="100%" FontSize="11" VerticalAlignment="Center" Margin="6,0"
                                Foreground="{DynamicResource TextSecondaryBrush}" Visibility="Collapsed"/>
-                    <Slider x:Name="ZoomSlider" Width="130" Minimum="50" Maximum="300" Value="100" Visibility="Collapsed"
+                    <Slider x:Name="ZoomSlider" Width="130" Minimum="20" Maximum="300" Value="100" Visibility="Collapsed"
                             ValueChanged="ZoomSlider_ValueChanged" VerticalAlignment="Center"/>
                     <Button x:Name="ZoomInButton" Style="{StaticResource IconButton}" ToolTip="放大 (+)" Click="ZoomIn_Click" Visibility="Collapsed">
                         <TextBlock Text="＋" FontSize="14"/>

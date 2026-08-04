@@ -38,6 +38,7 @@ public static class SmokeTest
         bool defaultOpensWebtoon = false;
         bool modePersisted = false;
         bool zoomPersisted = false;
+        bool zoomTextSyncOk = false;
         double closeSeconds = -1;
         bool tallWebtoonOk = false;
         double tallWebtoonSeconds = -1;
@@ -96,6 +97,11 @@ public static class SmokeTest
             await Task.Delay(2200);
             defaultOpensWebtoon = reader2.IsWebtoonReady;
             Capture(reader2, Path.Combine(outDir, "default-webtoon.png"));
+
+            // 缩放同步与更小缩放下限（20%）
+            reader2.TestSetZoom(0.3);
+            await Task.Delay(400);
+            zoomTextSyncOk = reader2.ZoomTextValue == "30%" && Math.Abs(reader2.CurrentZoom - 0.3) < 0.02;
 
             // 阅读方式与缩放比例按书记忆
             reader2.TestSwitchToPaged();
@@ -176,6 +182,7 @@ public static class SmokeTest
             $"漫画翻页: {comicReaderOk} | 快速翻页: {pagingOk} | 条漫: {webtoonOk} | 条漫滚动: {webtoonScrollOk} | 双页: {doubleOk} | 小说: {novelReaderOk} | PDF: {pdfReaderOk}\n" +
             $"默认阅读方式: 条漫={defaultModeOk} 打开即条漫={defaultOpensWebtoon}\n" +
             $"按书记忆: 翻页模式={modePersisted} 缩放150%={zoomPersisted}\n" +
+            $"缩放同步: 比例数字={zoomTextSyncOk}\n" +
             $"关闭阅读器耗时: {closeSeconds:F1}s\n" +
             (tallPdf.Length > 0 ? $"超长 PDF 条漫切换: {tallWebtoonOk}（耗时 {tallWebtoonSeconds:F1}s，页数 {readerWebtoonPages}）\n" : "") +
             (webtoonOk ? "条漫诊断: " + readerWebtoonStats + "\n" : "") +
@@ -189,7 +196,7 @@ public static class SmokeTest
         bool closeOk = closeSeconds >= 0 && closeSeconds < 3;
         return comic is not null && novel is not null && comicReaderOk && pagingOk && webtoonOk && webtoonScrollOk &&
                doubleOk && novelReaderOk && pdfReaderOk && tallOk && closeOk && defaultModeOk && defaultOpensWebtoon &&
-               modePersisted && zoomPersisted ? 0 : 1;
+               modePersisted && zoomPersisted && zoomTextSyncOk ? 0 : 1;
     }
 
     private static void Capture(Window window, string path)

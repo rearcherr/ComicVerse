@@ -84,11 +84,13 @@ public partial class ReaderWindow : Window
     internal int WebtoonRenderedCount => WebtoonView.RenderedCount;
     internal void TestSetZoom(double z)
     {
-        _zoom = Math.Clamp(z, 0.5, 3.0);
+        _zoom = Math.Clamp(z, 0.2, 3.0);
         _fitMode = "custom";
         ZoomSlider.Value = _zoom * 100;
     }
     internal double CurrentZoom => _mode == "webtoon" ? _zoom : PageScale.ScaleX;
+    internal string ZoomTextValue => ZoomText.Text;
+    private bool _syncingZoom;
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
@@ -131,7 +133,7 @@ public partial class ReaderWindow : Window
         _webtoonFraction = prog?.ScrollOffset ?? 0;
         if (prog is { Zoom: > 0 })
         {
-            _zoom = Math.Clamp(prog.Zoom, 0.5, 3.0);
+            _zoom = Math.Clamp(prog.Zoom, 0.2, 3.0);
             _fitMode = "custom";
             ZoomSlider.Value = _zoom * 100;
         }
@@ -388,6 +390,7 @@ public partial class ReaderWindow : Window
         if (!_webtoonInitialized)
         {
             _webtoonInitialized = true;
+            WebtoonView.ScaleChanged += OnWebtoonScaleChanged;
             WebtoonView.CurrentPageChanged += idx =>
             {
                 _page = idx;
@@ -487,7 +490,7 @@ public partial class ReaderWindow : Window
 
     private void ZoomIn_Click(object sender, RoutedEventArgs e)
     {
-        _zoom = Math.Clamp(_zoom * 1.25, 0.5, 3.0);
+        _zoom = Math.Clamp(_zoom * 1.25, 0.2, 3.0);
         _fitMode = "custom";
         ZoomSlider.Value = _zoom * 100;
         ApplyFit();
@@ -495,7 +498,7 @@ public partial class ReaderWindow : Window
 
     private void ZoomOut_Click(object sender, RoutedEventArgs e)
     {
-        _zoom = Math.Clamp(_zoom / 1.25, 0.5, 3.0);
+        _zoom = Math.Clamp(_zoom / 1.25, 0.2, 3.0);
         _fitMode = "custom";
         ZoomSlider.Value = _zoom * 100;
         ApplyFit();
@@ -503,8 +506,9 @@ public partial class ReaderWindow : Window
 
     private void ZoomSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
+        if (_syncingZoom) return;
         if (!IsLoaded) return;
-        _zoom = Math.Clamp(e.NewValue / 100.0, 0.5, 3.0);
+        _zoom = Math.Clamp(e.NewValue / 100.0, 0.2, 3.0);
         _fitMode = "custom";
         if (_mode == "webtoon")
         {
@@ -514,6 +518,23 @@ public partial class ReaderWindow : Window
         else
         {
             ApplyFit();
+        }
+    }
+
+    private void OnWebtoonScaleChanged(double scale)
+    {
+        if (_syncingZoom) return;
+        _syncingZoom = true;
+        try
+        {
+            _zoom = scale;
+            ZoomText.Text = (scale * 100).ToString("0") + "%";
+            if (Math.Abs(ZoomSlider.Value - scale * 100) > 0.5)
+                ZoomSlider.Value = scale * 100;
+        }
+        finally
+        {
+            _syncingZoom = false;
         }
     }
 

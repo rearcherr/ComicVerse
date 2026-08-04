@@ -1,12 +1,13 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Threading;
 using ComicVerse.Core.Services;
 
 namespace ComicVerse.App.Controls;
 
 /// <summary>
-/// 条漫阅读器：按视口范围懒加载/卸载图片，支持缩放与页号追踪（US-03/US-07）。
+/// 条漫阅读器：按视口范围懒加载/卸载图片，支持平滑惯性滚动、缩放与页号追踪。
 /// </summary>
 public partial class WebtoonViewer : UserControl
 {
@@ -20,21 +21,26 @@ public partial class WebtoonViewer : UserControl
     private int _currentIndex = -1;
     private long _buildVersion;
     private double _lastViewportWidth = -1;
+    private double _scrollTarget = double.NaN;
+    private bool _smoothing;
+    private DispatcherTimer? _smoothTimer;
 
     public event Action<int>? CurrentPageChanged;
     public event Action? LayoutReady;
+    public event Action<double>? ScaleChanged;
 
     public double ScaleFactor
     {
         get => _scale;
         set
         {
-            double v = Math.Clamp(value, 0.5, 3.0);
+            double v = Math.Clamp(value, 0.2, 3.0);
             if (Math.Abs(v - _scale) < 0.001) return;
             double fraction = ScrollFraction;
             _scale = v;
             Rebuild();
             ScrollToFraction(fraction);
+            ScaleChanged?.Invoke(v);
         }
     }
 
@@ -76,7 +82,7 @@ public partial class WebtoonViewer : UserControl
     {
         ShowLoading("正在排版条漫…");
         _loader = loader;
-        _scale = Math.Clamp(scale, 0.5, 3.0);
+        _scale = Math.Clamp(scale, 0.2, 3.0);
         _lastViewportWidth = -1;
         _layoutReady = false;
         _dims.Clear();
@@ -112,18 +118,57 @@ public partial class WebtoonViewer : UserControl
     {
         if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
         {
-            // Ctrl+滚轮：缩放
             ScaleFactor *= 1 + e.Delta / 1200.0;
             e.Handled = true;
             return;
         }
-        // 滚轮滚动加速（默认 3 行 ≈ 48px，这里按 2.5 倍）
-        Scroll.ScrollToVerticalOffset(Scroll.VerticalOffset - e.Delta * 2.5);
+
+        // 平滑惯性滚动：目标位置累积，定时器以缓动方式逼近
+        double current = double.IsNaN(_scrollTarget) ? Scroll.VerticalOffset : _scrollTarget;
+        _scrollTarget = Math.Clamp(current - e.Delta * 2.5, 0, Math.Max(0, Scroll.ScrollableHeight));
+        StartSmoothScroll();
         e.Handled = true;
+    }
+
+    private void StartSmoothScroll()
+    {
+        if (_smoothTimer is null)
+        {
+            _smoothTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+            _smoothTimer.Tick += SmoothTick;
+        }
+        if (!_smoothTimer.IsEnabled)
+            _smoothTimer.Start();
+    }
+
+    private void SmoothTick(object? sender, EventArgs e)
+    {
+        if (double.IsNaN(_scrollTarget)) return;
+        double current = Scroll.VerticalOffset;
+        double diff = _scrollTarget - current;
+        if (Math.Abs(diff) < 0.5)
+        {
+            _smoothing = true;
+            Scroll.ScrollToVerticalOffset(_scrollTarget);
+            _smoothing = false;
+            _scrollTarget = double.NaN;
+            _smoothTimer?.Stop();
+            return;
+        }
+        _smoothing = true;
+        Scroll.ScrollToVerticalOffset(current + diff * 0.35);
+        _smoothing = false;
+    }
+
+    private void CancelSmoothScroll()
+    {
+        _scrollTarget = double.NaN;
+        _smoothTimer?.Stop();
     }
 
     public void ScrollToPage(int index)
     {
+        CancelSmoothScroll();
         if (!_layoutReady || _tops.Count == 0) return;
         index = Math.Clamp(index, 0, _dims.Count - 1);
         double y = Math.Clamp(_tops[index], 0, Math.Max(0, _total - Scroll.ViewportHeight));
@@ -133,11 +178,16 @@ public partial class WebtoonViewer : UserControl
 
     public void ScrollToFraction(double fraction)
     {
+        CancelSmoothScroll();
         if (!_layoutReady) return;
         Scroll.ScrollToVerticalOffset(Math.Clamp(fraction, 0, 1) * Math.Max(0, Scroll.ScrollableHeight));
     }
 
-    public void ScrollBy(double dy) => Scroll.ScrollToVerticalOffset(Scroll.VerticalOffset + dy);
+    public void ScrollBy(double dy)
+    {
+        CancelSmoothScroll();
+        Scroll.ScrollToVerticalOffset(Scroll.VerticalOffset + dy);
+    }
 
     private void Rebuild()
     {
@@ -164,6 +214,8 @@ public partial class WebtoonViewer : UserControl
 
     private void OnScrollChanged(object sender, ScrollChangedEventArgs e)
     {
+        if (!_smoothing)
+            _scrollTarget = double.NaN; // 用户直接拖动/键盘操作时取消平滑
         if (!_layoutReady) return;
         UpdateVisible(_buildVersion);
         NotifyCurrent();
