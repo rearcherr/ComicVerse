@@ -1,0 +1,208 @@
+using System.Windows;
+using System.Windows.Controls;
+using ComicVerse.Core.Services;
+
+namespace ComicVerse.App.Controls;
+
+/// <summary>
+/// 条漫阅读器：按视口范围懒加载/卸载图片，支持缩放与页号追踪（US-03/US-07）。
+/// </summary>
+public partial class WebtoonViewer : UserControl
+{
+    private ComicImageLoader? _loader;
+    private readonly List<(int Width, int Height)> _dims = new();
+    private readonly List<double> _tops = new();
+    private readonly Dictionary<int, Image> _rendered = new();
+    private double _scale = 1.0;
+    private double _total;
+    private bool _layoutReady;
+    private int _currentIndex = -1;
+    private long _buildVersion;
+    private double _lastViewportWidth = -1;
+
+    public event Action<int>? CurrentPageChanged;
+    public event Action? LayoutReady;
+
+    public double ScaleFactor
+    {
+        get => _scale;
+        set
+        {
+            double v = Math.Clamp(value, 0.5, 3.0);
+            if (Math.Abs(v - _scale) < 0.001) return;
+            double fraction = ScrollFraction;
+            _scale = v;
+            Rebuild();
+            ScrollToFraction(fraction);
+        }
+    }
+
+    public double ScrollFraction =>
+        Scroll.ScrollableHeight <= 0 ? 0 : Math.Clamp(Scroll.VerticalOffset / Scroll.ScrollableHeight, 0, 1);
+
+    public int CurrentPage => _currentIndex;
+    public bool IsReady => _layoutReady;
+    public int PageCount => _dims.Count;
+    internal double CanvasWidth => RootCanvas.Width;
+    internal double CanvasHeight => RootCanvas.Height;
+    internal int RenderedCount => _rendered.Count;
+
+    internal void EnsureLayout()
+    {
+        if (!_layoutReady || _dims.Count == 0) return;
+        double fraction = ScrollFraction;
+        Rebuild();
+        ScrollToFraction(fraction);
+        NotifyCurrent();
+    }
+
+    public WebtoonViewer()
+    {
+        InitializeComponent();
+        LayoutUpdated += (_, _) =>
+        {
+            if (_layoutReady && _dims.Count > 0 && Math.Abs(Scroll.ViewportWidth - _lastViewportWidth) > 1)
+            {
+                _lastViewportWidth = Scroll.ViewportWidth;
+                double fraction = ScrollFraction;
+                Rebuild();
+                ScrollToFraction(fraction);
+            }
+        };
+    }
+
+    public void Initialize(ComicImageLoader loader, Func<int, (int W, int H)?> dimProvider, int startPage, double scale)
+    {
+        _loader = loader;
+        _scale = Math.Clamp(scale, 0.5, 3.0);
+        _lastViewportWidth = -1;
+        _dims.Clear();
+        for (int i = 0; i < loader.PageCount; i++)
+        {
+            var d = dimProvider(i);
+            _dims.Add(d ?? (800, 1200));
+        }
+        Rebuild();
+        _lastViewportWidth = Scroll.ViewportWidth;
+        ScrollToPage(Math.Clamp(startPage, 0, Math.Max(0, _dims.Count - 1)));
+        _layoutReady = true;
+        NotifyCurrent();
+        LayoutReady?.Invoke();
+    }
+
+    public void ScrollToPage(int index)
+    {
+        if (!_layoutReady || _tops.Count == 0) return;
+        index = Math.Clamp(index, 0, _dims.Count - 1);
+        double y = Math.Clamp(_tops[index], 0, Math.Max(0, _total - Scroll.ViewportHeight));
+        Scroll.ScrollToVerticalOffset(y);
+        NotifyCurrent();
+    }
+
+    public void ScrollToFraction(double fraction)
+    {
+        if (!_layoutReady) return;
+        Scroll.ScrollToVerticalOffset(Math.Clamp(fraction, 0, 1) * Math.Max(0, Scroll.ScrollableHeight));
+    }
+
+    public void ScrollBy(double dy) => Scroll.ScrollToVerticalOffset(Scroll.VerticalOffset + dy);
+
+    private void Rebuild()
+    {
+        _buildVersion++;
+        long version = _buildVersion;
+        double s = _scale;
+        double canvasW = Math.Max(1, Scroll.ViewportWidth) * s;
+        _tops.Clear();
+        double y = 0;
+        foreach (var d in _dims)
+        {
+            _tops.Add(y);
+            y += d.Height * (canvasW / Math.Max(1, d.Width));
+        }
+        _total = y;
+        RootCanvas.Width = canvasW;
+        RootCanvas.Height = Math.Max(1, _total);
+
+        foreach (var img in _rendered.Values)
+            RootCanvas.Children.Remove(img);
+        _rendered.Clear();
+        UpdateVisible(version);
+    }
+
+    private void OnScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        if (!_layoutReady) return;
+        UpdateVisible(_buildVersion);
+        NotifyCurrent();
+    }
+
+    private void UpdateVisible(long version)
+    {
+        if (version != _buildVersion || _loader is null) return;
+        double top = Scroll.VerticalOffset - Scroll.ViewportHeight;
+        double bottom = Scroll.VerticalOffset + Scroll.ViewportHeight * 2;
+        int first = Math.Max(0, BinarySearch(_tops, top));
+        int last = Math.Min(_dims.Count - 1, BinarySearch(_tops, bottom));
+
+        foreach (var kv in _rendered.Where(kv => kv.Key < first || kv.Key > last).ToList())
+        {
+            RootCanvas.Children.Remove(kv.Value);
+            _rendered.Remove(kv.Key);
+        }
+
+        for (int i = first; i <= last; i++)
+        {
+            if (_rendered.ContainsKey(i)) continue;
+            var img = new Image
+            {
+                Width = RootCanvas.Width,
+                Height = _dims[i].Height * (RootCanvas.Width / Math.Max(1, _dims[i].Width)),
+                Stretch = System.Windows.Media.Stretch.Fill
+            };
+            Canvas.SetTop(img, _tops[i]);
+            RootCanvas.Children.Add(img);
+            _rendered[i] = img;
+            int idx = i;
+            _ = LoadAsync(idx, img, version);
+        }
+    }
+
+    private async Task LoadAsync(int index, Image img, long version)
+    {
+        if (_loader is null) return;
+        var bmp = await _loader.GetPageAsync(index).ConfigureAwait(true);
+        if (version != _buildVersion) return;
+        img.Source = bmp;
+    }
+
+    private void NotifyCurrent()
+    {
+        if (!_layoutReady || _tops.Count == 0) return;
+        int idx = Math.Clamp(BinarySearch(_tops, Scroll.VerticalOffset + 40), 0, _dims.Count - 1);
+        if (idx != _currentIndex)
+        {
+            _currentIndex = idx;
+            CurrentPageChanged?.Invoke(idx);
+        }
+    }
+
+    private static int BinarySearch(List<double> tops, double value)
+    {
+        int lo = 0, hi = tops.Count - 1, ans = 0;
+        while (lo <= hi)
+        {
+            int mid = (lo + hi) / 2;
+            if (tops[mid] <= value)
+            {
+                ans = mid;
+                lo = mid + 1;
+            }
+            else
+            {
+                hi = mid - 1;
+            }
+        }
+        return ans;
+    }
+}

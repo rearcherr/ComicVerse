@@ -1,0 +1,21 @@
+# Build output
+bin/
+obj/
+*.user
+
+# Visual Studio
+.vs/
+.vscode/
+
+# Test/run artifacts
+TestResults/
+artifacts/
+
+# User data (library DB lives in %LOCALAPPDATA%\ComicVerse)
+*.db
+*.db-wal
+*.db-shm
+
+# OS
+Thumbs.db
+Desktop.ini
