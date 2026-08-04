@@ -119,4 +119,43 @@ public static class TestData
         sb.Append("trailer\n<< /Size ").Append(objects.Count + 1).Append(" /Root 1 0 R >>\nstartxref\n").Append(xrefPos).Append("\n%%EOF\n");
         File.WriteAllText(path, sb.ToString(), new ASCIIEncoding());
     }
+
+    /// <summary>生成多页 PDF（每页一段文字），用于测试远距离跳页。</summary>
+    public static void MakeMultiPagePdf(string path, int pageCount, int pageWidth = 612, int pageHeight = 792)
+    {
+        var objects = new List<string>
+        {
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            $"<< /Type /Pages /Kids [{string.Join(" ", Enumerable.Range(0, pageCount).Select(i => $"{3 + i} 0 R"))}] /Count {pageCount} >>"
+        };
+        int fontObj = pageCount * 2 + 3;
+        for (int i = 0; i < pageCount; i++)
+        {
+            int contentObj = pageCount + 3 + i;
+            objects.Add($"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {pageWidth} {pageHeight}] /Contents {contentObj} 0 R /Resources << /Font << /F1 {fontObj} 0 R >> >> >>");
+        }
+        for (int i = 0; i < pageCount; i++)
+        {
+            string streamText = $"BT /F1 20 Tf 72 720 Td (Page {i + 1}) Tj ET";
+            byte[] bytes = Encoding.ASCII.GetBytes(streamText);
+            objects.Add($"<< /Length {bytes.Length} >>\nstream\n{streamText}\nendstream");
+        }
+        objects.Add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+
+        var sb = new StringBuilder();
+        sb.Append("%PDF-1.4\n");
+        var offsets = new long[objects.Count + 1];
+        for (int i = 0; i < objects.Count; i++)
+        {
+            offsets[i + 1] = sb.Length;
+            sb.Append(i + 1).Append(" 0 obj\n").Append(objects[i]).Append("\nendobj\n");
+        }
+        long xrefPos = sb.Length;
+        sb.Append("xref\n0 ").Append(objects.Count + 1).Append('\n');
+        sb.Append("0000000000 65535 f \n");
+        for (int i = 1; i <= objects.Count; i++)
+            sb.Append(offsets[i].ToString("D10", CultureInfo.InvariantCulture)).Append(" 00000 n \n");
+        sb.Append("trailer\n<< /Size ").Append(objects.Count + 1).Append(" /Root 1 0 R >>\nstartxref\n").Append(xrefPos).Append("\n%%EOF\n");
+        File.WriteAllText(path, sb.ToString(), new ASCIIEncoding());
+    }
 }

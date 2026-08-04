@@ -22,6 +22,7 @@ public partial class WebtoonViewer : UserControl
     private long _buildVersion;
     private double _lastViewportWidth = -1;
     private double _scrollTarget = double.NaN;
+    private int _pendingIndex = -1;
     private bool _smoothing;
     private DispatcherTimer? _smoothTimer;
 
@@ -101,7 +102,9 @@ public partial class WebtoonViewer : UserControl
         Rebuild();
         _lastViewportWidth = Scroll.ViewportWidth;
         _layoutReady = true;
-        ScrollToPage(Math.Clamp(startPage, 0, Math.Max(0, _dims.Count - 1)));
+        int start = _pendingIndex >= 0 ? _pendingIndex : Math.Clamp(startPage, 0, Math.Max(0, _dims.Count - 1));
+        _pendingIndex = -1;
+        ScrollToPage(start);
         NotifyCurrent();
         HideLoading();
         LayoutReady?.Invoke();
@@ -170,7 +173,13 @@ public partial class WebtoonViewer : UserControl
     public void ScrollToPage(int index)
     {
         CancelSmoothScroll();
-        if (!_layoutReady || _tops.Count == 0) return;
+        if (!_layoutReady || _tops.Count == 0)
+        {
+            // 条漫尚未完成排版时先记下目标页，初始化完成后跳过去
+            _pendingIndex = Math.Clamp(index, 0, Math.Max(0, _dims.Count - 1));
+            return;
+        }
+        _pendingIndex = -1;
         index = Math.Clamp(index, 0, _dims.Count - 1);
         double y = Math.Clamp(_tops[index], 0, Math.Max(0, _total - Scroll.ViewportHeight));
         Scroll.ScrollToVerticalOffset(y);
@@ -258,6 +267,14 @@ public partial class WebtoonViewer : UserControl
         if (_loader is null) return;
         var bmp = await _loader.GetPageAsync(index).ConfigureAwait(true);
         if (version != _buildVersion) return;
+        if (bmp is null)
+        {
+            // 瞬时解码失败重试一次，避免条漫出现整条白屏
+            await Task.Delay(150);
+            if (version != _buildVersion) return;
+            bmp = await _loader.GetPageAsync(index).ConfigureAwait(true);
+            if (version != _buildVersion) return;
+        }
         img.Source = bmp;
     }
 

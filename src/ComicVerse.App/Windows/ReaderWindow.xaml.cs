@@ -1,6 +1,7 @@
 using System.IO;
 using System.IO.Compression;
 using System.Text;
+using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
@@ -54,6 +55,8 @@ public partial class ReaderWindow : Window
     private bool _sliderActive;
     private bool _changingChapter;
     private bool _barsVisible = true;
+    private CancellationTokenSource? _pageLoadCts;
+    private long _pageLoadVersion;
 
     public ReaderWindow(Book book, bool fromStart = false)
     {
@@ -81,6 +84,8 @@ public partial class ReaderWindow : Window
     internal void TestSwitchToPaged() => ModePaged.IsChecked = true;
     internal void TestNext() => Next();
     internal void TestWebtoonScrollBy(double dy) => WebtoonView.ScrollBy(dy);
+    internal void TestJumpToPage(int page) => LoadPageAsync(page);
+    internal void TestWebtoonJumpTo(int page) => WebtoonView.ScrollToPage(page);
     internal int WebtoonRenderedCount => WebtoonView.RenderedCount;
     internal void TestSetZoom(double z)
     {
@@ -269,21 +274,51 @@ public partial class ReaderWindow : Window
     {
         if (_loader is null || _closed) return;
         index = Math.Clamp(index, 0, _loader.PageCount - 1);
+
+        // 快速跳页时取消上一次未完成的加载，避免解码任务堆积拖慢目标页
+        _pageLoadCts?.Cancel();
+        var cts = _pageLoadCts = new CancellationTokenSource();
+        long version = ++_pageLoadVersion;
         _page = index;
-        PageImage.Source = null;
         LoadingPanel.Visibility = Visibility.Visible;
+        LoadingText.Text = "正在加载…";
 
-        var bmp = await _loader.GetPageAsync(index);
-        if (_closed || _mode != "paged" || index != _page) return;
+        try
+        {
+            var bmp = await _loader.GetPageAsync(index, cts.Token);
+            if (_closed || _mode != "paged" || index != _page || version != _pageLoadVersion) return;
+            if (bmp is null)
+            {
+                // 解码失败：保留旧页，给出可重试提示，而不是静默白屏
+                LoadingText.Text = "加载失败，点击重试";
+                return;
+            }
 
-        PageImage.Source = bmp;
-        LoadingPanel.Visibility = Visibility.Collapsed;
-        ApplyFit();
-        PageImage.BeginAnimation(OpacityProperty,
-            new DoubleAnimation(0.25, 1.0, TimeSpan.FromMilliseconds(180)));
-        _loader.Prefetch(index);
-        UpdateComicInfo();
-        ScheduleSave();
+            PageImage.Source = bmp;
+            LoadingPanel.Visibility = Visibility.Collapsed;
+            ApplyFit();
+            PageImage.BeginAnimation(OpacityProperty,
+                new DoubleAnimation(0.25, 1.0, TimeSpan.FromMilliseconds(180)));
+            _loader.Prefetch(index);
+            UpdateComicInfo();
+            ScheduleSave();
+        }
+        catch (OperationCanceledException)
+        {
+            // 被更新的跳页或关闭操作取代，无需处理
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"加载第 {index + 1} 页失败", ex);
+            if (_closed || _mode != "paged" || index != _page || version != _pageLoadVersion) return;
+            LoadingText.Text = "加载失败，点击重试";
+        }
+    }
+
+    private void LoadingPanel_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (_loader is not null && !_closed)
+            LoadPageAsync(_page);
     }
 
     private void ApplyFit()
@@ -398,6 +433,7 @@ public partial class ReaderWindow : Window
     private async void ShowWebtoon()
     {
         _mode = "webtoon";
+        _pageLoadCts?.Cancel();
         WebtoonView.Visibility = Visibility.Visible;
         ComicPagedView.Visibility = DoubleView.Visibility = NovelView.Visibility = Visibility.Collapsed;
         BookmarkPanel.Visibility = Visibility.Collapsed;
@@ -433,6 +469,7 @@ public partial class ReaderWindow : Window
     private void ShowDouble()
     {
         _mode = "double";
+        _pageLoadCts?.Cancel();
         DoubleView.Visibility = Visibility.Visible;
         ComicPagedView.Visibility = WebtoonView.Visibility = NovelView.Visibility = Visibility.Collapsed;
         BookmarkPanel.Visibility = Visibility.Collapsed;
@@ -1080,7 +1117,11 @@ public partial class ReaderWindow : Window
         {
             int target = (int)(fraction * _loader.PageCount);
             target = Math.Clamp(target, 0, _loader.PageCount - 1);
-            if (_mode == "webtoon") WebtoonView.ScrollToPage(target);
+            if (_mode == "webtoon")
+            {
+                _page = target;
+                WebtoonView.ScrollToPage(target);
+            }
             else if (_mode == "double")
             {
                 _spreadStart = target;
@@ -1102,6 +1143,7 @@ public partial class ReaderWindow : Window
         _saveTimer.Stop();
         _autoScrollTimer?.Stop();
         _hideBarsTimer?.Stop();
+        _pageLoadCts?.Cancel();
         try { _loader?.Dispose(); } catch { }
         try { _epubZip?.Dispose(); } catch { }
     }

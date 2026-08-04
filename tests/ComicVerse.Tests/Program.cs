@@ -62,6 +62,8 @@ public static class Program
             Run("伪 CBR 回退", () => TestFakeCbrFallback(work));
             Run("PDF 漫画源", () => TestPdfSource(samples.Pdf));
             Run("超长条漫 PDF 切片", () => TestTallPdfSlice(samples.TallPdf));
+            Run("PDF 远页渲染", () => TestPdfFarPage(samples.MultiPdf));
+            Run("长漫画远距离跳页", () => TestFarJumpLoad(work));
             Run("TXT 章节解析", () => TestTxtParse(samples.TxtUtf8));
             Run("EPUB 解析", () => TestEpubParse(samples.Epub));
             Run("指纹稳定", () => TestFingerprint(work, samples.Cbz));
@@ -134,6 +136,8 @@ public static class Program
         TestData.MakeMinimalPdf(pdf);
         string tallPdf = Path.Combine(work, "tall.pdf");
         TestData.MakeMinimalPdf(tallPdf, pageWidth: 100, pageHeight: 10000);
+        string multiPdf = Path.Combine(work, "long.pdf");
+        TestData.MakeMultiPagePdf(multiPdf, 40);
 
         string txtUtf8 = Path.Combine(work, "novel-utf8.txt");
         File.WriteAllText(txtUtf8, "第一卷 序章\n\n这是序章的内容，用来测试小说解析。\n\n第二卷 第一章\n\n第一章正文……\n\n第二章 出发\n\n第二章正文。\n", new UTF8Encoding(false));
@@ -148,10 +152,10 @@ public static class Program
             ("第二章 启程", "<p>第二章：众人收拾行囊，踏上旅程。</p>")
         });
 
-        return new Samples(cbz, tar, folder, pdf, txtUtf8, txtGbk, epub, tallPdf);
+        return new Samples(cbz, tar, folder, pdf, txtUtf8, txtGbk, epub, tallPdf, multiPdf);
     }
 
-    private sealed record Samples(string Cbz, string Tar, string Folder, string Pdf, string TxtUtf8, string TxtGbk, string Epub, string TallPdf);
+    private sealed record Samples(string Cbz, string Tar, string Folder, string Pdf, string TxtUtf8, string TxtGbk, string Epub, string TallPdf, string MultiPdf);
 
     private static void GenerateSamples()
     {
@@ -299,6 +303,48 @@ public static class Program
         Assert(img is not null && img.PixelWidth == 1600, "超长页切片渲染失败，宽=" + img?.PixelWidth);
         Assert(img!.PixelHeight is >= 64 and <= 4096, "切片高度越界: " + img.PixelHeight);
         Assert(size!.Value.Height == img.PixelHeight, $"快速路径尺寸与渲染尺寸不一致: {size.Value.Height} vs {img.PixelHeight}");
+    }
+
+    private static void TestPdfFarPage(string path)
+    {
+        using var source = new PdfComicSource(path);
+        Assert(source.PageCount == 40, "多页 PDF 页数错误: " + source.PageCount);
+        using var s = source.GetPageStream(39);
+        var img = ImageHelper.DecodeFrozen(s);
+        Assert(img is not null && img.PixelWidth == 1600, "PDF 远页渲染失败");
+    }
+
+    private static void TestFarJumpLoad(string work)
+    {
+        // 构造 120 页长漫画，模拟进度条快速拖动后落到末页
+        string imgDir = Path.Combine(work, "long-imgs");
+        Directory.CreateDirectory(imgDir);
+        var pages = new List<string>();
+        for (int i = 1; i <= 120; i++)
+        {
+            string p = Path.Combine(imgDir, $"p{i:000}.png");
+            TestData.MakePng(p, 480, 880, Color.FromRgb((byte)(30 + i % 200), (byte)(60 + i % 120), 210), $"P{i}");
+            pages.Add(p);
+        }
+        string cbz = Path.Combine(work, "long.cbz");
+        TestData.MakeCbz(cbz, pages.Select((p, i) => ($"pages/p{i + 1:000}.png", p)));
+
+        using var source = new ZipComicSource(cbz);
+        var cache = new ImageCacheService { MaxBytes = 256L * 1024 * 1024 };
+        using var loader = new ComicImageLoader(source, cache, prefetchCount: 2);
+        Assert(loader.PageCount == 120, "长漫画页数错误: " + loader.PageCount);
+
+        // 第一波快速跳页请求随后被用户取消（模拟继续拖到更远）
+        using var jumpCts = new CancellationTokenSource();
+        var tasks = new List<Task<System.Windows.Media.Imaging.BitmapSource?>>();
+        for (int i = 10; i < 90; i += 2)
+            tasks.Add(loader.GetPageAsync(i, jumpCts.Token));
+        jumpCts.Cancel();
+        tasks.Add(loader.GetPageAsync(119));
+
+        var results = Task.WhenAll(tasks).GetAwaiter().GetResult();
+        Assert(results[^1] is not null, "远距离跳页后末页为 null（白屏）");
+        Assert(loader.GetCached(119) is not null, "远距离跳页后末页未入缓存");
     }
 
     private static void TestTxtParse(string path)

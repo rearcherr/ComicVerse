@@ -34,6 +34,8 @@ public static class SmokeTest
         bool pdfReaderOk = false;
         bool pagingOk = false;
         bool webtoonScrollOk = false;
+        bool farJumpOk = false;
+        bool webtoonFarJumpOk = false;
         bool defaultModeOk = false;
         bool defaultOpensWebtoon = false;
         bool modePersisted = false;
@@ -68,6 +70,15 @@ public static class SmokeTest
             }
             await Task.Delay(600);
             pagingOk = reader.IsComicPageLoaded;
+            // 远距离跳页：连续快速跳到靠后页，末页不应白屏
+            reader.TestJumpToPage(9);
+            await Task.Delay(100);
+            reader.TestJumpToPage(7);
+            await Task.Delay(100);
+            reader.TestJumpToPage(9);
+            await Task.Delay(1000);
+            farJumpOk = reader.IsComicPageLoaded;
+            Capture(reader, Path.Combine(outDir, "reader-far-jump.png"));
             try
             {
                 reader.TestSwitchToWebtoon();
@@ -78,6 +89,10 @@ public static class SmokeTest
                 reader.TestWebtoonScrollBy(1600);
                 await Task.Delay(900);
                 webtoonScrollOk = reader.IsWebtoonReady && reader.WebtoonRenderedCount > 0;
+                reader.TestWebtoonJumpTo(reader.WebtoonPageCount - 1);
+                await Task.Delay(1200);
+                webtoonFarJumpOk = reader.IsWebtoonReady && reader.WebtoonRenderedCount > 0;
+                Capture(reader, Path.Combine(outDir, "reader-webtoon-far-jump.png"));
                 reader.TestSwitchToDouble();
                 await Task.Delay(1400);
                 doubleOk = reader.IsDoubleReady;
@@ -201,7 +216,7 @@ public static class SmokeTest
             $"SMOKE 完成 | 样例目录: {samplesDir}\n" +
             $"导入: 新增 {result.Imported}, 更新 {result.Updated}, 失败 {result.Failed.Count}\n" +
             $"书架: {App.Library.GetBooks().Count} 本 (漫画 {comic is not null}, 小说 {novel is not null})\n" +
-            $"漫画翻页: {comicReaderOk} | 快速翻页: {pagingOk} | 条漫: {webtoonOk} | 条漫滚动: {webtoonScrollOk} | 双页: {doubleOk} | 小说: {novelReaderOk} | PDF: {pdfReaderOk}\n" +
+            $"漫画翻页: {comicReaderOk} | 快速翻页: {pagingOk} | 远跳: {farJumpOk} | 条漫: {webtoonOk} | 条漫滚动: {webtoonScrollOk} | 条漫远跳: {webtoonFarJumpOk} | 双页: {doubleOk} | 小说: {novelReaderOk} | PDF: {pdfReaderOk}\n" +
             $"默认阅读方式: 条漫={defaultModeOk} 打开即条漫={defaultOpensWebtoon}\n" +
             $"按书记忆: 翻页模式={modePersisted} 缩放150%={zoomPersisted} 比例数字={zoomTextRestored}\n" +
             $"缩放同步: 比例数字={zoomTextSyncOk}\n" +
@@ -217,7 +232,8 @@ public static class SmokeTest
 
         bool tallOk = tallPdf.Length == 0 || tallWebtoonOk;
         bool closeOk = closeSeconds >= 0 && closeSeconds < 3;
-        return comic is not null && novel is not null && comicReaderOk && pagingOk && webtoonOk && webtoonScrollOk &&
+        return comic is not null && novel is not null && comicReaderOk && pagingOk && farJumpOk &&
+               webtoonOk && webtoonScrollOk && webtoonFarJumpOk &&
                doubleOk && novelReaderOk && pdfReaderOk && tallOk && closeOk && defaultModeOk && defaultOpensWebtoon &&
                modePersisted && zoomPersisted && zoomTextSyncOk && zoomTextRestored &&
                novelProgressOk && novelLightThemeOk && novelRestoreOk ? 0 : 1;
