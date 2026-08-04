@@ -91,6 +91,19 @@ public partial class ReaderWindow : Window
     internal double CurrentZoom => _mode == "webtoon" ? _zoom : PageScale.ScaleX;
     internal string ZoomTextValue => ZoomText.Text;
     private bool _syncingZoom;
+    internal int NovelPage => _novelPage;
+    internal int NovelChapterIndex => _novelChapter;
+    internal void TestNovelNextPage() => NovelNext();
+    internal void TestNovelNextChapter()
+    {
+        if (_novel is not null && _novelChapter < _novel.Chapters.Count - 1)
+            LoadNovelChapter(_novelChapter + 1);
+    }
+    internal void TestToggleTheme() => Theme_Click(this, new RoutedEventArgs());
+    internal string NovelBackgroundHex =>
+        (NovelPaged.Document as System.Windows.Documents.FlowDocument)?.Background is System.Windows.Media.SolidColorBrush b
+            ? b.Color.ToString()
+            : "";
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
@@ -136,6 +149,7 @@ public partial class ReaderWindow : Window
             _zoom = Math.Clamp(prog.Zoom, 0.2, 3.0);
             _fitMode = "custom";
             ZoomSlider.Value = _zoom * 100;
+            UpdateZoomText(_zoom);
         }
 
         string savedMode = _fromStart ? "" : (prog?.Mode ?? "");
@@ -211,6 +225,7 @@ public partial class ReaderWindow : Window
         _novelSettings = App.Settings.NovelSettings.Clone();
         ChapterList.ItemsSource = _novel.Chapters.Select((c, i) => $"{i + 1}. {c.Title}").ToList();
         LoadNovelSettingsUi();
+        ApplyThemeToNovelSettings(rebuild: false);
 
         var prog = _fromStart ? null : App.Library.GetProgress(_book.Id);
         int chapter = prog is null ? 0 : Math.Clamp(prog.ChapterIndex, 0, _novel.Chapters.Count - 1);
@@ -222,7 +237,7 @@ public partial class ReaderWindow : Window
         ComicPagedView.Visibility = WebtoonView.Visibility = DoubleView.Visibility = Visibility.Collapsed;
         _mode = "novel";
         ApplyNovelSubMode();
-        LoadNovelChapter(chapter);
+        LoadNovelChapter(chapter, resetPosition: false);
         if (_fromStart) SaveNow();
     }
 
@@ -453,6 +468,7 @@ public partial class ReaderWindow : Window
         }
 
         DoubleLoading.Visibility = Visibility.Collapsed;
+        UpdateZoomText(_zoom);
         _loader.Prefetch(_spreadStart);
         UpdateComicInfo();
         ScheduleSave();
@@ -557,7 +573,7 @@ public partial class ReaderWindow : Window
 
     #region 小说
 
-    private void LoadNovelChapter(int index)
+    private void LoadNovelChapter(int index, bool resetPosition = true)
     {
         if (_novel is null) return;
         _novelChapter = Math.Clamp(index, 0, _novel.Chapters.Count - 1);
@@ -572,8 +588,11 @@ public partial class ReaderWindow : Window
             NovelPaged.Document = null;
             NovelScroll.Document = doc;
         }
-        _novelPage = 0;
-        _novelScrollFraction = 0;
+        if (resetPosition)
+        {
+            _novelPage = 0;
+            _novelScrollFraction = 0;
+        }
 
         _changingChapter = true;
         if (ChapterList.Items.Count > _novelChapter)
@@ -780,6 +799,12 @@ public partial class ReaderWindow : Window
     private void RebuildNovel_Tick(object? sender, EventArgs e)
     {
         if (_rebuildTimer is not null) _rebuildTimer.Stop();
+        ReadNovelSettingsFromUi();
+        RebuildNovelDocumentNow();
+    }
+
+    private void ReadNovelSettingsFromUi()
+    {
         _novelSettings.FontFamily = FontCombo.SelectedItem as string ?? _novelSettings.FontFamily;
         _novelSettings.FontSize = FontSizeSlider.Value;
         _novelSettings.LineSpacing = LineSpacingSlider.Value;
@@ -788,7 +813,10 @@ public partial class ReaderWindow : Window
         _novelSettings.TextColor = (TextColorCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? _novelSettings.TextColor;
         _novelSettings.Background = (BgColorCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? _novelSettings.Background;
         App.Settings.NovelSettings = _novelSettings;
+    }
 
+    private void RebuildNovelDocumentNow()
+    {
         double fraction = _novelSubMode == "scroll" ? _novelScrollFraction
             : _chapterPages.TryGetValue(_novelChapter, out int pc) && pc > 1 ? (double)_novelPage / (pc - 1) : 0;
 
@@ -820,6 +848,25 @@ public partial class ReaderWindow : Window
             }
             UpdateNovelInfo();
         });
+    }
+
+    private void ApplyThemeToNovelSettings(bool rebuild = true)
+    {
+        if (_novel is null) return;
+        bool light = ThemeService.Current == "light";
+        const string darkBg = "#1A1A2E";
+        const string darkText = "#E8E8F4";
+        const string lightBg = "#FAF6F8";
+        const string lightText = "#2F2A3E";
+        if (_novelSettings.Background == (light ? darkBg : lightBg))
+            _novelSettings.Background = light ? lightBg : darkBg;
+        if (_novelSettings.TextColor == (light ? darkText : lightText))
+            _novelSettings.TextColor = light ? lightText : darkText;
+        SelectComboByTag(BgColorCombo, _novelSettings.Background);
+        SelectComboByTag(TextColorCombo, _novelSettings.TextColor);
+        App.Settings.NovelSettings = _novelSettings;
+        if (rebuild)
+            RebuildNovelDocumentNow();
     }
 
     private void Encoding_Changed(object sender, RoutedEventArgs e)
@@ -1066,6 +1113,7 @@ public partial class ReaderWindow : Window
         ThemeService.Toggle();
         App.Settings.Theme = ThemeService.Current;
         ReaderThemeGlyph.Text = ThemeService.Current == "dark" ? "☾" : "☀";
+        ApplyThemeToNovelSettings();
     }
 
     private void Fullscreen_Click(object sender, RoutedEventArgs e)

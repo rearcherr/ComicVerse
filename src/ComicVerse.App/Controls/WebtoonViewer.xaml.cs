@@ -83,6 +83,7 @@ public partial class WebtoonViewer : UserControl
         ShowLoading("正在排版条漫…");
         _loader = loader;
         _scale = Math.Clamp(scale, 0.2, 3.0);
+        ScaleChanged?.Invoke(_scale);
         _lastViewportWidth = -1;
         _layoutReady = false;
         _dims.Clear();

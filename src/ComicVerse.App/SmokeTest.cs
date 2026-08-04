@@ -39,6 +39,10 @@ public static class SmokeTest
         bool modePersisted = false;
         bool zoomPersisted = false;
         bool zoomTextSyncOk = false;
+        bool zoomTextRestored = false;
+        bool novelProgressOk = false;
+        bool novelLightThemeOk = false;
+        bool novelRestoreOk = false;
         double closeSeconds = -1;
         bool tallWebtoonOk = false;
         double tallWebtoonSeconds = -1;
@@ -114,6 +118,7 @@ public static class SmokeTest
             await Task.Delay(1800);
             modePersisted = reader3.IsComicPageLoaded;
             zoomPersisted = Math.Abs(reader3.CurrentZoom - 1.5) < 0.05;
+            zoomTextRestored = reader3.ZoomTextValue == "150%";
             Capture(reader3, Path.Combine(outDir, "mode-zoom-restored.png"));
             reader3.Close();
         }
@@ -124,8 +129,25 @@ public static class SmokeTest
             reader.Show();
             await Task.Delay(1800);
             novelReaderOk = reader.IsNovelReady;
+            reader.TestNovelNextPage();
+            reader.TestNovelNextPage();
+            reader.TestNovelNextChapter();
+            await Task.Delay(700);
+            int novelChapterBefore = reader.NovelChapterIndex;
+            novelProgressOk = novelChapterBefore >= 1;
+            reader.TestToggleTheme();
+            await Task.Delay(900);
+            novelLightThemeOk = reader.NovelBackgroundHex.Length > 0 && !reader.NovelBackgroundHex.Contains("1A1A2E");
+            reader.TestToggleTheme();
+            await Task.Delay(600);
             Capture(reader, Path.Combine(outDir, "novel-paged.png"));
             reader.Close();
+
+            var novelReader2 = new ReaderWindow(novel) { ShowInTaskbar = false };
+            novelReader2.Show();
+            await Task.Delay(2200);
+            novelRestoreOk = novelReader2.IsNovelReady && novelReader2.NovelChapterIndex >= novelChapterBefore;
+            novelReader2.Close();
         }
 
         // PDF 单独导入并打开（单文件发布时 pdfium.dll 需可被加载）
@@ -181,8 +203,9 @@ public static class SmokeTest
             $"书架: {App.Library.GetBooks().Count} 本 (漫画 {comic is not null}, 小说 {novel is not null})\n" +
             $"漫画翻页: {comicReaderOk} | 快速翻页: {pagingOk} | 条漫: {webtoonOk} | 条漫滚动: {webtoonScrollOk} | 双页: {doubleOk} | 小说: {novelReaderOk} | PDF: {pdfReaderOk}\n" +
             $"默认阅读方式: 条漫={defaultModeOk} 打开即条漫={defaultOpensWebtoon}\n" +
-            $"按书记忆: 翻页模式={modePersisted} 缩放150%={zoomPersisted}\n" +
+            $"按书记忆: 翻页模式={modePersisted} 缩放150%={zoomPersisted} 比例数字={zoomTextRestored}\n" +
             $"缩放同步: 比例数字={zoomTextSyncOk}\n" +
+            $"小说: 翻页进度={novelProgressOk} 浅色背景={novelLightThemeOk} 恢复进度={novelRestoreOk}\n" +
             $"关闭阅读器耗时: {closeSeconds:F1}s\n" +
             (tallPdf.Length > 0 ? $"超长 PDF 条漫切换: {tallWebtoonOk}（耗时 {tallWebtoonSeconds:F1}s，页数 {readerWebtoonPages}）\n" : "") +
             (webtoonOk ? "条漫诊断: " + readerWebtoonStats + "\n" : "") +
@@ -196,7 +219,8 @@ public static class SmokeTest
         bool closeOk = closeSeconds >= 0 && closeSeconds < 3;
         return comic is not null && novel is not null && comicReaderOk && pagingOk && webtoonOk && webtoonScrollOk &&
                doubleOk && novelReaderOk && pdfReaderOk && tallOk && closeOk && defaultModeOk && defaultOpensWebtoon &&
-               modePersisted && zoomPersisted && zoomTextSyncOk ? 0 : 1;
+               modePersisted && zoomPersisted && zoomTextSyncOk && zoomTextRestored &&
+               novelProgressOk && novelLightThemeOk && novelRestoreOk ? 0 : 1;
     }
 
     private static void Capture(Window window, string path)

@@ -220,6 +220,7 @@
                                 <ComboBoxItem Content="默认" Tag="#E8E8F4"/>
                                 <ComboBoxItem Content="纯白" Tag="#FFFFFF"/>
                                 <ComboBoxItem Content="米黄" Tag="#F5E6C8"/>
+                                <ComboBoxItem Content="深墨字" Tag="#2F2A3E"/>
                                 <ComboBoxItem Content="墨黑" Tag="#1F1F28"/>
                                 <ComboBoxItem Content="青绿" Tag="#C9F2E0"/>
                             </ComboBox>
@@ -229,6 +230,7 @@
                                 <ComboBoxItem Content="深蓝紫" Tag="#1A1A2E"/>
                                 <ComboBoxItem Content="纯黑" Tag="#101014"/>
                                 <ComboBoxItem Content="米白" Tag="#FBF4E8"/>
+                                <ComboBoxItem Content="浅色阅读白" Tag="#FAF6F8"/>
                                 <ComboBoxItem Content="淡粉白" Tag="#FFF5F7"/>
                             </ComboBox>
 
