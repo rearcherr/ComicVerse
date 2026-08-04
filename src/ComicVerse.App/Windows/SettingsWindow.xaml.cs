@@ -75,7 +75,7 @@ public partial class SettingsWindow : Window
     {
         try
         {
-            string exe = Environment.ProcessPath ?? System.Reflection.Assembly.GetExecutingAssembly().Location;
+            string exe = Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "ComicVerse.exe");
             FileAssociations.Register(exe);
             HintText.Text = "已注册 .cbz/.cbr/.cbt/.cb7/.pdf/.txt/.epub 文件关联，双击即可用 ComicVerse 打开。";
         }

@@ -31,6 +31,7 @@ public static class SmokeTest
         bool webtoonOk = false;
         bool doubleOk = false;
         bool novelReaderOk = false;
+        bool pdfReaderOk = false;
         string? comicError = null;
         string readerWebtoonStats = "";
 
@@ -70,6 +71,23 @@ public static class SmokeTest
             reader.Close();
         }
 
+        // PDF 单独导入并打开（单文件发布时 pdfium.dll 需可被加载）
+        string pdfPath = Directory.GetFiles(samplesDir, "*.pdf", SearchOption.AllDirectories).FirstOrDefault() ?? "";
+        if (pdfPath.Length > 0)
+        {
+            var pdfResult = await App.Importer.ImportAsync(new[] { pdfPath });
+            var pdfBook = App.Library.GetBookByPath(Path.GetFullPath(pdfPath));
+            if (pdfBook is not null)
+            {
+                var reader = new ReaderWindow(pdfBook) { ShowInTaskbar = false };
+                reader.Show();
+                await Task.Delay(2000);
+                pdfReaderOk = reader.IsComicPageLoaded;
+                Capture(reader, Path.Combine(outDir, "reader-pdf.png"));
+                reader.Close();
+            }
+        }
+
         await Task.Delay(400);
         Capture(main, Path.Combine(outDir, "shelf.png"));
         main.Close();
@@ -78,7 +96,7 @@ public static class SmokeTest
             $"SMOKE 完成 | 样例目录: {samplesDir}\n" +
             $"导入: 新增 {result.Imported}, 更新 {result.Updated}, 失败 {result.Failed.Count}\n" +
             $"书架: {App.Library.GetBooks().Count} 本 (漫画 {comic is not null}, 小说 {novel is not null})\n" +
-            $"漫画翻页: {comicReaderOk} | 条漫: {webtoonOk} | 双页: {doubleOk} | 小说: {novelReaderOk}\n" +
+            $"漫画翻页: {comicReaderOk} | 条漫: {webtoonOk} | 双页: {doubleOk} | 小说: {novelReaderOk} | PDF: {pdfReaderOk}\n" +
             (webtoonOk ? "条漫诊断: " + readerWebtoonStats + "\n" : "") +
             (comicError is null ? "" : "异常: " + comicError + "\n") +
             $"截图目录: {outDir}";
@@ -86,7 +104,7 @@ public static class SmokeTest
         Console.WriteLine(summary);
         File.WriteAllText(Path.Combine(outDir, "summary.txt"), summary);
 
-        return comic is not null && novel is not null && comicReaderOk && webtoonOk && doubleOk && novelReaderOk ? 0 : 1;
+        return comic is not null && novel is not null && comicReaderOk && webtoonOk && doubleOk && novelReaderOk && pdfReaderOk ? 0 : 1;
     }
 
     private static void Capture(Window window, string path)

@@ -27,6 +27,7 @@ public partial class App : Application
             : Path.GetFullPath(overrideDir);
         Directory.CreateDirectory(AppDataDir);
         Log.Configure(Path.Combine(AppDataDir, "logs"));
+        PdfNative.EnsureExtracted(Path.Combine(AppDataDir, "native"));
 
         Library = new LibraryService(Path.Combine(AppDataDir, "library.db"));
         Settings = new AppSettingsService(Library);

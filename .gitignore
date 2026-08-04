@@ -10,6 +10,9 @@ obj/
 # Test/run artifacts
 TestResults/
 artifacts/
+publish/
+dist/
+.offline-feed/
 
 # User data (library DB lives in %LOCALAPPDATA%\ComicVerse)
 *.db
