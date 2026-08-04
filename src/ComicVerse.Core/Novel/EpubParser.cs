@@ -27,7 +27,7 @@ public sealed class EpubParser
 
     public NovelBook ParseArchive(ZipArchive zip, string fallbackTitle)
     {
-        string opfPath = FindOpfPath(zip);
+        string? opfPath = FindOpfPath(zip);
         if (opfPath is null)
             throw new InvalidDataException("EPUB 缺少 META-INF/container.xml 或 OPF 文件");
 

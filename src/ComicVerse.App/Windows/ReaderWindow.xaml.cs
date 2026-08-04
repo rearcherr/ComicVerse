@@ -402,7 +402,7 @@ public partial class ReaderWindow : Window
             int start = _page;
             await WebtoonView.InitializeAsync(_loader!, i => _loader!.GetPageSize(i), start, scale);
             if (_closed || _mode != "webtoon") return;
-            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
+            _ = Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
             {
                 WebtoonView.EnsureLayout();
                 WebtoonView.ScrollToFraction(_fromStart ? 0 : _webtoonFraction);

@@ -46,7 +46,8 @@ jobs:
       - name: Package zip
         shell: pwsh
         run: |
-          Compress-Archive -Path './publish/ComicVerse.exe' -DestinationPath "ComicVerse-Portable-$($env:GITHUB_REF_NAME)-win-x64.zip"
+          Copy-Item './docs/使用说明.txt' './publish/使用说明.txt'
+          Compress-Archive -Path './publish/ComicVerse.exe','./publish/使用说明.txt' -DestinationPath "ComicVerse-Portable-$($env:GITHUB_REF_NAME)-win-x64.zip"
           Get-ChildItem -Filter "ComicVerse-Portable-*" | Select-Object Name, Length
 
       - name: Upload to Release
