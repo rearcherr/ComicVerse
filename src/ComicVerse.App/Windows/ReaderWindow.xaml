@@ -175,7 +175,7 @@
 
                 <Grid Grid.Column="1">
                     <FlowDocumentPageViewer x:Name="NovelPaged" Background="{DynamicResource ReaderBgBrush}"
-                                            Zoom="100"/>
+                                            Zoom="100" PreviewMouseWheel="NovelPaged_PreviewMouseWheel"/>
                     <FlowDocumentScrollViewer x:Name="NovelScroll" Visibility="Collapsed"
                                               Background="{DynamicResource ReaderBgBrush}"
                                               VerticalScrollBarVisibility="Auto"

@@ -991,8 +991,31 @@ public partial class ReaderWindow : Window
     private void NovelScroll_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
     {
         StopAutoScroll();
-        // 滚到章末继续下滑 → 下一章；滚到章首继续上滑 → 上一章（停在章末）
-        NovelScrollStep(e.Delta < 0 ? 1 : -1);
+        if (_novel is null) return;
+        var sv = VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll);
+        if (sv is null) return;
+        double before = sv.VerticalOffset;
+        bool down = e.Delta < 0;
+        // 先让 ScrollViewer 处理这一格滚轮；处理完位置没动 = 已经到章节头/尾，此时才接章
+        Dispatcher.BeginInvoke(DispatcherPriority.Input, () =>
+        {
+            if (_novel is null || _novelSubMode != "scroll") return;
+            var sv2 = VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll);
+            if (sv2 is null) return;
+            double after = sv2.VerticalOffset;
+            bool noMove = Math.Abs(after - before) < 0.5;
+            Log.Info($"[novel] wheel down={down} moved={!noMove} offset={after:F0}/{sv2.ScrollableHeight:F0} chapter={_novelChapter + 1}/{_novel.Chapters.Count} subMode={_novelSubMode}");
+            if (down && noMove && after >= sv2.ScrollableHeight - 3) NovelScrollStep(1);
+            else if (!down && noMove && after <= 3) NovelScrollStep(-1);
+        });
+    }
+
+    /// <summary>翻页模式：滚轮翻页，页末/页首自动衔接上下章。</summary>
+    private void NovelPaged_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (_novel is null) return;
+        if (e.Delta < 0) NovelNext(); else NovelPrev();
+        e.Handled = true;
     }
 
     /// <summary>章节边界衔接：delta = +1 下一章（从顶部开始），-1 上一章（停在章末）。返回是否发生了切换。</summary>
@@ -1003,8 +1026,8 @@ public partial class ReaderWindow : Window
         if (sv is null) return false;
         double height = sv.ScrollableHeight;
         bool fitsOnScreen = height <= 1;                     // 本章短到不需要滚动：上下都算边界
-        bool atBottom = fitsOnScreen || height - sv.VerticalOffset < 1.5;
-        bool atTop = fitsOnScreen || sv.VerticalOffset < 1.5;
+        bool atBottom = fitsOnScreen || height - sv.VerticalOffset < 3;
+        bool atTop = fitsOnScreen || sv.VerticalOffset < 3;
         if (delta > 0 && atBottom)
         {
             if (_novelChapter >= _novel.Chapters.Count - 1) return false;
