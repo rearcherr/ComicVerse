@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using ComicVerse.Core;
 using ComicVerse.Core.Comics;
 using ComicVerse.Core.Models;
@@ -45,6 +46,12 @@ public static class Program
             var img = ImageHelper.DecodeFrozen(stream);
             File.WriteAllBytes(args[2], ImageHelper.EncodePng(img!));
             Console.WriteLine($"已导出第 1 片: {img!.PixelWidth}x{img.PixelHeight} -> {args[2]}");
+            return 0;
+        }
+
+        if (args.Contains("--pdfscan") && args.Length > 1)
+        {
+            ScanPdfSlices(args[1]);
             return 0;
         }
 
@@ -579,6 +586,40 @@ public static class Program
             try { File.Delete(db); } catch { }
             try { File.Delete(db + "-wal"); } catch { }
             try { File.Delete(db + "-shm"); } catch { }
+        }
+    }
+
+    /// <summary>抽样渲染若干切片并统计非白像素比例，判断渲染结果是否为空白图。</summary>
+    private static void ScanPdfSlices(string path)
+    {
+        using var source = new ComicVerse.Core.Comics.PdfComicSource(path);
+        int total = source.PageCount;
+        Console.WriteLine($"切片总数: {total}");
+        var indexes = new List<int> { 0, 1, total / 20, total / 10, total / 4, total / 2, total * 3 / 4, total - 10, total - 2, total - 1 };
+        foreach (int idx in indexes.Distinct().Where(i => i >= 0 && i < total))
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            using var stream = source.GetPageStream(idx);
+            long bytes = stream.Length;
+            var img = ImageHelper.DecodeFrozen(stream);
+            sw.Stop();
+            if (img is null)
+            {
+                Console.WriteLine($"  第 {idx + 1} 片: 解码失败");
+                continue;
+            }
+            var converted = new FormatConvertedBitmap(img, PixelFormats.Bgra32, null, 0);
+            int w = converted.PixelWidth, h = converted.PixelHeight;
+            int stride = w * 4;
+            var buf = new byte[stride * h];
+            converted.CopyPixels(buf, stride, 0);
+            long nonWhite = 0, sampled = 0;
+            for (int i = 0; i + 3 < buf.Length; i += 4 * 37)
+            {
+                sampled++;
+                if (buf[i] < 240 || buf[i + 1] < 240 || buf[i + 2] < 240) nonWhite++;
+            }
+            Console.WriteLine($"  第 {idx + 1} 片: {w}x{h} PNG={bytes / 1024}KB 非白={nonWhite * 100.0 / Math.Max(1, sampled):F1}% 用时={sw.ElapsedMilliseconds}ms");
         }
     }
 

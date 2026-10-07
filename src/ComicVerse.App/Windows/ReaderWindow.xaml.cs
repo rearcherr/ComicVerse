@@ -88,8 +88,23 @@ public partial class ReaderWindow : Window
     internal void TestWebtoonJumpTo(int page) => WebtoonView.ScrollToPage(page);
     internal int WebtoonRenderedCount => WebtoonView.RenderedCount;
     internal int WebtoonRenderedLoadedCount => WebtoonView.RenderedWithSourceCount;
+    internal int WebtoonBlankStripCount => WebtoonView.RenderedWithoutSourceCount;
+    internal double WebtoonScrollOffset => WebtoonView.ScrollOffset;
+    internal (int First, int Last) WebtoonVisibleRange => (WebtoonView.VisibleFirst, WebtoonView.VisibleLast);
     internal int CurrentPageNumber => _page;
     internal int ComicPageCount => _loader?.PageCount ?? 0;
+    /// <summary>模拟真实拖动进度条：按下 → 连续改值 → 松手跳页。</summary>
+    internal void TestSliderDrag(double fromFraction, double toFraction, int steps = 12)
+    {
+        _sliderActive = true;
+        for (int i = 1; i <= steps; i++)
+        {
+            double f = fromFraction + (toFraction - fromFraction) * i / steps;
+            ProgressSlider.Value = Math.Clamp(f, 0, 1) * 1000;
+        }
+        _sliderActive = false;
+        ApplySliderJump();
+    }
     internal void TestSetZoom(double z)
     {
         _zoom = Math.Clamp(z, 0.2, 3.0);

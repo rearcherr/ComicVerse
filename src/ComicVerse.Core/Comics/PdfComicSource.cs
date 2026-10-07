@@ -6,7 +6,7 @@ namespace ComicVerse.Core.Comics;
 /// PDF 漫画源：常规页面整页渲染；超长页（条漫，高度/宽度超过阈值）按段切片，
 /// 每段作为独立一页，避免超出位图尺寸上限（如 560×132842pt 的单页长条漫）。
 /// </summary>
-public sealed class PdfComicSource : IComicSource
+public sealed class PdfComicSource : IComicSource, IPageBitmapSource
 {
     private const int RenderWidthPx = 1600;
     private const float MaxSliceAspect = 2.2f;
@@ -71,6 +71,17 @@ public sealed class PdfComicSource : IComicSource
             (int)Math.Round((slice.Y1 - slice.Y0) / slice.PageWidth * RenderWidthPx),
             64, MaxSliceHeightPx);
         return (RenderWidthPx, heightPx);
+    }
+
+    /// <summary>直接渲染为位图，省掉 PNG 编码与再解码（长条漫 PDF 提速明显）。</summary>
+    public System.Windows.Media.Imaging.BitmapSource? RenderPageBitmap(int index)
+    {
+        if (index < 0 || index >= _slices.Count) return null;
+        var slice = _slices[index];
+        int heightPx = Math.Clamp(
+            (int)Math.Round((slice.Y1 - slice.Y0) / slice.PageWidth * RenderWidthPx),
+            64, MaxSliceHeightPx);
+        return _renderer.RenderBitmap(slice.Page, slice.Y0, slice.Y1, RenderWidthPx, heightPx);
     }
 
     public void Dispose() => _renderer?.Dispose();

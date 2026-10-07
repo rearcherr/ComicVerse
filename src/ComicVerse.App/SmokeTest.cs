@@ -45,6 +45,13 @@ public static class SmokeTest
         bool webtoonScrollOk = false;
         bool farJumpOk = false;
         bool webtoonFarJumpOk = false;
+        bool sliderDragOk = false;
+        int sliderDragBlank = -1;
+        int sliderDragPage = -1;
+        double sliderDragMs = -1;
+        double sliderDragInk = -1;
+        double sliderDragOffset = -1;
+        string sliderDragRange = "";
         int farJumpPage = -1;
         bool defaultModeOk = false;
         bool defaultOpensWebtoon = false;
@@ -121,6 +128,27 @@ public static class SmokeTest
                 webtoonFarJumpOk = reader.IsWebtoonReady && reader.WebtoonRenderedCount > 0
                     && reader.WebtoonRenderedLoadedCount > 0 && reader.CurrentPageNumber == last;
                 Capture(reader, Path.Combine(outDir, "reader-webtoon-far-jump.png"));
+                // 大幅拖动进度条：松手后视口内的每一屏都必须真正加载出图片（不能空白）
+                reader.TestSliderDrag(0.05, 0.92);
+                var dragSw = System.Diagnostics.Stopwatch.StartNew();
+                double dragInk = 0;
+                while (dragSw.Elapsed < TimeSpan.FromSeconds(8))
+                {
+                    dragInk = ContentInkRatio(reader);
+                    if (reader.WebtoonRenderedCount > 0 && reader.WebtoonBlankStripCount == 0 && dragInk > 0.05)
+                        break;
+                    await Task.Delay(200);
+                }
+                sliderDragMs = Math.Round(dragSw.Elapsed.TotalMilliseconds);
+                sliderDragPage = reader.CurrentPageNumber;
+                sliderDragInk = dragInk;
+                sliderDragOffset = reader.WebtoonScrollOffset;
+                var range = reader.WebtoonVisibleRange;
+                sliderDragRange = $"{range.First + 1}-{range.Last + 1}";
+                sliderDragBlank = reader.WebtoonBlankStripCount;
+                sliderDragOk = reader.IsWebtoonReady && reader.WebtoonRenderedCount > 0
+                    && sliderDragBlank == 0 && sliderDragInk > 0.05;
+                Capture(reader, Path.Combine(outDir, "reader-webtoon-slider-drag.png"));
                 reader.TestSwitchToDouble();
                 await Task.Delay(1400);
                 doubleOk = reader.IsDoubleReady;
@@ -267,6 +295,7 @@ public static class SmokeTest
             $"导入: 新增 {result.Imported}, 更新 {result.Updated}, 失败 {result.Failed.Count}\n" +
             $"书架: {App.Library.GetBooks().Count} 本 (漫画 {comic is not null}, 小说 {novel is not null})\n" +
             $"漫画翻页: {comicReaderOk} | 快速翻页: {pagingOk} | 远跳: {farJumpOk} (页 {farJumpPage}) | 条漫: {webtoonOk} | 条漫滚动: {webtoonScrollOk} | 条漫远跳: {webtoonFarJumpOk} | 双页: {doubleOk} | 小说: {novelReaderOk} | PDF: {pdfReaderOk}\n" +
+            $"条漫拖进度条: {sliderDragOk} (落到第 {sliderDragPage + 1} 页，视口 {sliderDragRange}，偏移 {sliderDragOffset:F0}，内容占比 {sliderDragInk * 100:F1}%，空白条 {sliderDragBlank}，出图耗时 {sliderDragMs / 1000:F1}s)\n" +
             $"默认阅读方式: 条漫={defaultModeOk} 打开即条漫={defaultOpensWebtoon}\n" +
             $"按书记忆: 翻页模式={modePersisted} 缩放150%={zoomPersisted} 比例数字={zoomTextRestored}\n" +
             $"缩放同步: 比例数字={zoomTextSyncOk}\n" +
@@ -288,6 +317,7 @@ public static class SmokeTest
         bool stallOk = openStallMs >= 0 && openStallMs < 1500 && sessionStallMs < 2500 && (longPdfStallMs < 0 || longPdfStallMs < 1500);
         return comic is not null && novel is not null && comicReaderOk && pagingOk && farJumpOk &&
                webtoonOk && webtoonScrollOk && webtoonFarJumpOk &&
+               sliderDragOk &&
                doubleOk && novelReaderOk && pdfReaderOk && tallOk && closeOk && stallOk && defaultModeOk && defaultOpensWebtoon &&
                modePersisted && zoomPersisted && zoomTextSyncOk && zoomTextRestored &&
                novelProgressOk && novelLightThemeOk && novelRestoreOk ? 0 : 1;
@@ -304,6 +334,36 @@ public static class SmokeTest
         enc.Frames.Add(BitmapFrame.Create(rtb));
         using var fs = File.Create(path);
         enc.Save(fs);
+    }
+
+    /// <summary>内容区“有内容”的比例：与背景色差异明显的像素占比，用于判断是否真的空白。</summary>
+    private static double ContentInkRatio(Window window)
+    {
+        window.UpdateLayout();
+        int w = Math.Max(1, (int)window.ActualWidth);
+        int h = Math.Max(1, (int)window.ActualHeight);
+        var rtb = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
+        rtb.Render(window);
+        int stride = w * 4;
+        var buf = new byte[stride * h];
+        rtb.CopyPixels(buf, stride, 0);
+        // 以阅读器背景色为基准：空白区域就是一块背景色，加载出图后像素与背景差异明显
+        var bg = (window.TryFindResource("ReaderBgBrush") as SolidColorBrush)?.Color ?? Colors.Black;
+        byte rb = bg.B, rg = bg.G, rr = bg.R;
+        long ink = 0, total = 0;
+        int x0 = (int)(w * 0.25), x1 = (int)(w * 0.75);
+        int y0 = (int)(h * 0.2), y1 = (int)(h * 0.8);
+        for (int y = y0; y < y1; y += 3)
+        {
+            for (int x = x0; x < x1; x += 3)
+            {
+                int i = y * stride + x * 4;
+                total++;
+                int diff = Math.Abs(buf[i] - rb) + Math.Abs(buf[i + 1] - rg) + Math.Abs(buf[i + 2] - rr);
+                if (diff > 90) ink++;
+            }
+        }
+        return total == 0 ? 0 : (double)ink / total;
     }
 
     private static string CreateLongComic(string outDir, int pageCount = 120)

@@ -141,9 +141,18 @@ public sealed class ComicImageLoader : IDisposable
             await _decodeGate.WaitAsync(linked.Token).ConfigureAwait(false);
             acquired = true;
             ct.ThrowIfCancellationRequested();
-            using var stream = await Task.Run(() => _source.GetPageStream(index), linked.Token).ConfigureAwait(false);
-            ct.ThrowIfCancellationRequested();
-            var img = ImageHelper.DecodeFrozen(stream);
+            BitmapSource? img;
+            if (_source is IPageBitmapSource direct)
+            {
+                // PDF 等可直接出位图的源：跳过 PNG 编码/解码往返
+                img = await Task.Run(() => direct.RenderPageBitmap(index), linked.Token).ConfigureAwait(false);
+            }
+            else
+            {
+                using var stream = await Task.Run(() => _source.GetPageStream(index), linked.Token).ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
+                img = ImageHelper.DecodeFrozen(stream);
+            }
             if (img is not null)
                 _cache.Put(index, img);
             return img;

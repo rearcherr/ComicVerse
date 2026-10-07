@@ -24,7 +24,9 @@ public partial class WebtoonViewer : UserControl
     private double _lastViewportWidth = -1;
     private double _scrollTarget = double.NaN;
     private int _pendingIndex = -1;
-    private CancellationTokenSource? _renderCts;
+    private readonly Dictionary<int, CancellationTokenSource> _loadCts = new();
+    private DispatcherTimer? _resyncTimer;
+    private int _resyncTicks;
     private int _visibleFirst = -1;
     private int _visibleLast = -1;
     private bool _smoothing;
@@ -59,6 +61,10 @@ public partial class WebtoonViewer : UserControl
     internal double CanvasHeight => RootCanvas.Height;
     internal int RenderedCount => _rendered.Count;
     internal int RenderedWithSourceCount => _rendered.Values.Count(img => img.Source is not null);
+    internal int RenderedWithoutSourceCount => _rendered.Values.Count(img => img.Source is null);
+    internal int VisibleFirst => _visibleFirst;
+    internal int VisibleLast => _visibleLast;
+    internal double ScrollOffset => Scroll.VerticalOffset;
 
     internal void EnsureLayout()
     {
@@ -191,6 +197,7 @@ public partial class WebtoonViewer : UserControl
         double y = Math.Clamp(_tops[index], 0, Math.Max(0, _total - Scroll.ViewportHeight));
         Scroll.ScrollToVerticalOffset(y);
         NotifyCurrent();
+        ScheduleResync();
     }
 
     public void ScrollToFraction(double fraction)
@@ -198,6 +205,7 @@ public partial class WebtoonViewer : UserControl
         CancelSmoothScroll();
         if (!_layoutReady) return;
         Scroll.ScrollToVerticalOffset(Math.Clamp(fraction, 0, 1) * Math.Max(0, Scroll.ScrollableHeight));
+        ScheduleResync();
     }
 
     public void ScrollBy(double dy)
@@ -209,7 +217,7 @@ public partial class WebtoonViewer : UserControl
     private void Rebuild()
     {
         _buildVersion++;
-        _renderCts?.Cancel();
+        CancelAllLoads();
         _visibleFirst = -1;
         _visibleLast = -1;
         long version = _buildVersion;
@@ -248,23 +256,26 @@ public partial class WebtoonViewer : UserControl
         double bottom = Scroll.VerticalOffset + Scroll.ViewportHeight * 2;
         int first = Math.Max(0, BinarySearch(_tops, top));
         int last = Math.Min(_dims.Count - 1, BinarySearch(_tops, bottom));
-        if (first == _visibleFirst && last == _visibleLast) return;
         _visibleFirst = first;
         _visibleLast = last;
 
-        // 视口变化时取消上一批未完成的解码，避免滚动/跳页时任务堆积
-        _renderCts?.Cancel();
-        var cts = _renderCts = new CancellationTokenSource();
-
+        // 只取消离开视口的页的加载，避免误伤仍然可见、正在加载的页
         foreach (var kv in _rendered.Where(kv => kv.Key < first || kv.Key > last).ToList())
         {
             RootCanvas.Children.Remove(kv.Value);
             _rendered.Remove(kv.Key);
+            CancelLoad(kv.Key);
         }
 
         for (int i = first; i <= last; i++)
         {
-            if (_rendered.ContainsKey(i)) continue;
+            if (_rendered.TryGetValue(i, out var existing))
+            {
+                // 页仍在视口内但没出图（加载曾被打断），补一次加载
+                if (existing.Source is null && !_loadCts.ContainsKey(i))
+                    StartLoad(i, existing, version);
+                continue;
+            }
             var img = new Image
             {
                 Width = RootCanvas.Width,
@@ -274,32 +285,83 @@ public partial class WebtoonViewer : UserControl
             Canvas.SetTop(img, _tops[i]);
             RootCanvas.Children.Add(img);
             _rendered[i] = img;
-            int idx = i;
-            _ = LoadAsync(idx, img, version, cts.Token);
+            StartLoad(i, img, version);
         }
     }
 
-    private async Task LoadAsync(int index, Image img, long version, CancellationToken ct)
+    private void StartLoad(int index, Image img, long version)
+    {
+        var cts = new CancellationTokenSource();
+        _loadCts[index] = cts;
+        _ = LoadAsync(index, img, version, cts);
+    }
+
+    private void CancelLoad(int index)
+    {
+        if (_loadCts.Remove(index, out var cts))
+        {
+            cts.Cancel();
+            cts.Dispose();
+        }
+    }
+
+    private void CancelAllLoads()
+    {
+        foreach (var cts in _loadCts.Values)
+        {
+            cts.Cancel();
+            cts.Dispose();
+        }
+        _loadCts.Clear();
+    }
+
+    /// <summary>大画布下滚动偏移是延迟生效的：跳页后持续校正几次，确保可见区域真的加载出来。</summary>
+    private void ScheduleResync()
+    {
+        _resyncTicks = 8;
+        _resyncTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
+        _resyncTimer.Tick -= ResyncTick;
+        _resyncTimer.Tick += ResyncTick;
+        _resyncTimer.Stop();
+        _resyncTimer.Start();
+    }
+
+    private void ResyncTick(object? sender, EventArgs e)
+    {
+        if (--_resyncTicks <= 0) _resyncTimer?.Stop();
+        if (!_layoutReady || _loader is null) return;
+        UpdateVisible(_buildVersion);
+        NotifyCurrent();
+    }
+
+    private async Task LoadAsync(int index, Image img, long version, CancellationTokenSource cts)
     {
         if (_loader is null) return;
-        var bmp = await _loader.GetPageAsync(index, ct).ConfigureAwait(true);
-        if (version != _buildVersion || ct.IsCancellationRequested) return;
-        if (bmp is null && !ct.IsCancellationRequested)
+        var ct = cts.Token;
+        try
         {
-            // 瞬时解码失败重试一次，避免条漫出现整条白屏
-            try
+            var bmp = await _loader.GetPageAsync(index, ct).ConfigureAwait(true);
+            if (version != _buildVersion || ct.IsCancellationRequested) return;
+            if (bmp is null && !ct.IsCancellationRequested)
             {
+                // 瞬时解码失败重试一次，避免条漫出现整条白屏
                 await Task.Delay(150, ct);
                 if (version != _buildVersion || ct.IsCancellationRequested) return;
                 bmp = await _loader.GetPageAsync(index, ct).ConfigureAwait(true);
                 if (version != _buildVersion || ct.IsCancellationRequested) return;
             }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
+            img.Source = bmp;
         }
-        img.Source = bmp;
+        catch (OperationCanceledException)
+        {
+            // 页已离开视口或布局已重建
+        }
+        finally
+        {
+            if (_loadCts.TryGetValue(index, out var cur) && ReferenceEquals(cur, cts))
+                _loadCts.Remove(index);
+            cts.Dispose();
+        }
     }
 
     private void NotifyCurrent()

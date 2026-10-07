@@ -111,6 +111,32 @@ public sealed class PdfNativeRenderer : IDisposable
 
     private byte[] RenderPngCore(IntPtr pageHandle, int page, float y0Points, float y1Points, int widthPx, int heightPx)
     {
+        var (data, stride) = RenderCore(pageHandle, page, y0Points, y1Points, widthPx, heightPx);
+        return EncodeBgrxToPng(data, widthPx, heightPx, stride);
+    }
+
+    /// <summary>直接渲染为位图，跳过 PNG 编码/解码往返（条漫与翻页都更快）。</summary>
+    public BitmapSource RenderBitmap(int page, float y0Points, float y1Points, int widthPx, int heightPx)
+    {
+        lock (RenderSync)
+        {
+            IntPtr pageHandle = LoadPage(page);
+            try
+            {
+                var (data, stride) = RenderCore(pageHandle, page, y0Points, y1Points, widthPx, heightPx);
+                var bmp = BitmapSource.Create(widthPx, heightPx, 96, 96, PixelFormats.Bgr32, null, data, stride);
+                bmp.Freeze();
+                return bmp;
+            }
+            finally
+            {
+                FPDF_ClosePage(pageHandle);
+            }
+        }
+    }
+
+    private (byte[] Data, int Stride) RenderCore(IntPtr pageHandle, int page, float y0Points, float y1Points, int widthPx, int heightPx)
+    {
         IntPtr bitmap = FPDFBitmap_Create(widthPx, heightPx, 0); // 0 = BGRx 不透明
         if (bitmap == IntPtr.Zero)
             throw new ComicSourceException("创建渲染位图失败");
@@ -135,7 +161,7 @@ public sealed class PdfNativeRenderer : IDisposable
             var buffer = FPDFBitmap_GetBuffer(bitmap);
             var data = new byte[stride * heightPx];
             Marshal.Copy(buffer, data, 0, data.Length);
-            return EncodeBgrxToPng(data, widthPx, heightPx, stride);
+            return (data, stride);
         }
         catch (Exception ex)
         {
