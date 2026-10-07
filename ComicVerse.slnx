@@ -1,7 +1,6 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/ComicVerse.App/ComicVerse.App.csproj" />
-    <Project Path="src/ComicVerse.Android/ComicVerse.Android.csproj" />
     <Project Path="src/ComicVerse.Core/ComicVerse.Core.csproj" />
   </Folder>
   <Folder Name="/tests/">

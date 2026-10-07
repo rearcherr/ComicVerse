@@ -20,22 +20,16 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Install Android workload
-        run: dotnet workload install android
-
       - name: Build
         run: dotnet build ComicVerse.slnx -c Release
 
       - name: Core tests
         run: dotnet run --project tests/ComicVerse.Tests/ComicVerse.Tests.csproj -c Release --no-build
 
-      # Core 现在同时面向 windows 与 android：带 -r 发布时必须限定框架，
-      # 否则会去还原 Mono 运行时包（Microsoft.NETCore.App.Runtime.Mono.win-x64）而失败
       - name: Publish single-file exe
         run: >
           dotnet publish src/ComicVerse.App/ComicVerse.App.csproj
           -c Release -r win-x64 --self-contained true
-          -p:TargetFrameworks=net10.0-windows
           -p:PublishSingleFile=true
           -p:IncludeNativeLibrariesForSelfExtract=true
           -p:EnableCompressionInSingleFile=true
@@ -56,19 +50,10 @@ jobs:
           Compress-Archive -Path './publish/ComicVerse.exe','./publish/使用说明.txt' -DestinationPath "ComicVerse-Portable-$($env:GITHUB_REF_NAME)-win-x64.zip"
           Get-ChildItem -Filter "ComicVerse-Portable-*" | Select-Object Name, Length
 
-      - name: Collect Android APK
-        shell: pwsh
-        run: |
-          $apk = 'src/ComicVerse.Android/bin/Release/net10.0-android/com.comicverse.reader-Signed.apk'
-          if (-not (Test-Path $apk)) { throw "APK 未生成: $apk" }
-          Copy-Item $apk "ComicVerse-$($env:GITHUB_REF_NAME)-android.apk"
-          Get-Item "ComicVerse-$($env:GITHUB_REF_NAME)-android.apk" | Select-Object Name, Length
-
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/v')
         with:
           files: |
             ComicVerse-Portable-${{ github.ref_name }}-win-x64.zip
-            ComicVerse-${{ github.ref_name }}-android.apk
             publish/ComicVerse.exe
