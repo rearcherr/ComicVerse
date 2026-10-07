@@ -147,9 +147,12 @@ public static class SmokeTest
                 // 鼠标左键拖拽滑动：向下拖 180px，滚动偏移应同步上移约 180px
                 double beforeDrag = reader.WebtoonScrollOffset;
                 reader.TestWebtoonDragDown(180);
-                await Task.Delay(500); // 滚动偏移是延迟生效的，等它落地再比较
-                double dragDelta = reader.WebtoonScrollOffset - beforeDrag;
-                webtoonDragOk = Math.Abs(dragDelta + 180) < 60;
+                await Task.Delay(400); // 滚动偏移是延迟生效的，等它落地再比较
+                double afterDrag = reader.WebtoonScrollOffset;
+                await Task.Delay(500); // 松手后应完全静止：没有惯性漂移
+                double afterIdle = reader.WebtoonScrollOffset;
+                webtoonDragOk = Math.Abs(afterDrag - beforeDrag + 180) < 60
+                                && Math.Abs(afterIdle - afterDrag) < 2;
                 Capture(reader, Path.Combine(outDir, "reader-webtoon-far-jump.png"));
                 // 大幅拖动进度条：松手后视口内的每一屏都必须真正加载出图片（不能空白）
                 reader.TestSliderDrag(0.05, 0.92);

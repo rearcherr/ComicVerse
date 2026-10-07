@@ -31,13 +31,10 @@ public partial class WebtoonViewer : UserControl
     private int _visibleLast = -1;
     private bool _smoothing;
     private DispatcherTimer? _smoothTimer;
-    private readonly System.Diagnostics.Stopwatch _dragClock = System.Diagnostics.Stopwatch.StartNew();
-    private bool _dragging;
+    private bool _dragPressed;   // 已按下左键（还没超过起步阈值）
+    private bool _dragging;      // 正在拖拽
     private double _dragStartY;
     private double _dragStartOffset;
-    private double _dragLastY;
-    private double _dragLastMs;
-    private double _dragVelocity;
 
     public event Action<int>? CurrentPageChanged;
     public event Action? LayoutReady;
@@ -143,83 +140,73 @@ public partial class WebtoonViewer : UserControl
     private void OnPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (!_layoutReady) return;
-        BeginDrag(e.GetPosition(this).Y);
-        CaptureMouse();
-        Cursor = Cursors.SizeAll;
-        e.Handled = true;
+        // 点在滚动条（含滑块/空白轨道）上时交给 ScrollViewer 自己处理，不要抢，
+        // 否则滚动条会拖不动，看起来像界面卡住
+        if (IsFromScrollBar(e.OriginalSource as DependencyObject)) return;
+        _dragPressed = true;
+        _dragging = false;
+        _dragStartY = e.GetPosition(this).Y;
+        _dragStartOffset = Scroll.VerticalOffset;
     }
 
     private void OnPreviewMouseMove(object sender, MouseEventArgs e)
     {
-        if (!_dragging) return;
-        DragTo(e.GetPosition(this).Y);
+        if (!_dragPressed) return;
+        if (e.LeftButton != MouseButtonState.Pressed) // 在控件外松手等异常情况，直接收尾
+        {
+            EndDrag();
+            return;
+        }
+        double y = e.GetPosition(this).Y;
+        if (!_dragging)
+        {
+            _dragging = true;
+            Cursor = Cursors.SizeAll;   // 拖动中的光标反馈
+        }
+        CancelSmoothScroll();       // 抓住内容时停止滚轮遗留的滑动
+        Scroll.ScrollToVerticalOffset(_dragStartOffset - (y - _dragStartY));
         e.Handled = true;
     }
 
     private void OnPreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
-        if (!_dragging) return;
+        if (!_dragPressed) return;
+        bool wasDragging = _dragging;
         EndDrag();
-        if (IsMouseCaptured) ReleaseMouseCapture();
-        Cursor = Cursors.Arrow;
-        e.Handled = true;
+        if (wasDragging) e.Handled = true;
     }
 
-    private void OnLostMouseCapture(object sender, MouseEventArgs e)
-    {
-        if (!_dragging) return;
-        EndDrag();
-        Cursor = Cursors.Arrow;
-    }
+    private void OnLostMouseCapture(object sender, MouseEventArgs e) => EndDrag();
 
-    /// <summary>开始拖拽：记录起点与当前滚动位置。</summary>
-    private void BeginDrag(double y)
-    {
-        CancelSmoothScroll();
-        _dragging = true;
-        _dragStartY = y;
-        _dragStartOffset = Scroll.VerticalOffset;
-        _dragLastY = y;
-        _dragLastMs = _dragClock.Elapsed.TotalMilliseconds;
-        _dragVelocity = 0;
-    }
-
-    /// <summary>拖拽中：内容跟随鼠标 1:1 位移，并估算速度用于松手后的惯性。</summary>
-    private void DragTo(double y)
-    {
-        if (!_dragging) return;
-        double now = _dragClock.Elapsed.TotalMilliseconds;
-        double dt = now - _dragLastMs;
-        if (dt > 0.5)
-        {
-            double v = (y - _dragLastY) / dt;          // 像素/毫秒
-            _dragVelocity = _dragVelocity * 0.6 + v * 0.4;
-            _dragLastY = y;
-            _dragLastMs = now;
-        }
-        Scroll.ScrollToVerticalOffset(_dragStartOffset - (y - _dragStartY));
-    }
-
-    /// <summary>松手：速度够快就交给已有的缓动定时器继续滑一段。</summary>
+    /// <summary>松手即停：不做惯性滑动，只有按住拖动时才移动内容。</summary>
     private void EndDrag()
     {
-        if (!_dragging) return;
+        _dragPressed = false;
         _dragging = false;
-        if (Math.Abs(_dragVelocity) > 0.25)
-        {
-            double target = Scroll.VerticalOffset - _dragVelocity * 320;
-            _scrollTarget = Math.Clamp(target, 0, Math.Max(0, Scroll.ScrollableHeight));
-            StartSmoothScroll();
-        }
-        _dragVelocity = 0;
+        Cursor = Cursors.Arrow;
     }
 
-    /// <summary>自检钩子：分多步模拟向下拖拽 dy 像素（步进够密可避免触发惯性）。</summary>
+    private static bool IsFromScrollBar(DependencyObject? src)
+    {
+        while (src is not null)
+        {
+            if (src is System.Windows.Controls.Primitives.ScrollBar) return true;
+            src = System.Windows.Media.VisualTreeHelper.GetParent(src);
+        }
+        return false;
+    }
+
+    /// <summary>自检钩子：模拟按住左键向下拖拽 dy 像素后松手。</summary>
     internal void TestDragDown(double dy, int steps = 12)
     {
-        BeginDrag(300);
+        if (!_layoutReady) return;
+        CancelSmoothScroll();
+        _dragPressed = true;
+        _dragging = true;
+        _dragStartY = 300;
+        _dragStartOffset = Scroll.VerticalOffset;
         for (int i = 1; i <= steps; i++)
-            DragTo(300 + dy * i / steps);
+            Scroll.ScrollToVerticalOffset(_dragStartOffset - dy * i / steps);
         EndDrag();
     }
 
