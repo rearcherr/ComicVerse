@@ -59,8 +59,23 @@ public sealed class ZipComicSource : IComicSource
 
     public (int Width, int Height)? GetPageSize(int index)
     {
-        using var stream = GetPageStream(index);
-        return ImageHelper.GetDimensions(stream);
+        if (index < 0 || index >= _entries.Count) return null;
+        lock (_readLock)
+        {
+            // 只解压头部数据推断尺寸：整包逐页取尺寸是长漫画排版卡顿的主要原因
+            try
+            {
+                using var probe = _entries[index].Open();
+                var fast = ImageHelper.GetDimensionsFromPrefix(probe, out _);
+                if (fast is not null) return fast;
+            }
+            catch
+            {
+                // 忽略，退回完整读取
+            }
+            using var stream = _entries[index].Open();
+            return ImageHelper.GetDimensions(stream);
+        }
     }
 
     public void Dispose()

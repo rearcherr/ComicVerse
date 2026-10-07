@@ -79,6 +79,18 @@ public sealed class PdfNativeRenderer : IDisposable
         }
     }
 
+    /// <summary>按索引直接取页面尺寸，无需加载页面对象——打开长 PDF 时显著更快。</summary>
+    public (float Width, float Height) GetPageSizeByIndex(int page)
+    {
+        lock (RenderSync)
+        {
+            var size = new FS_SIZEF();
+            if (FPDF_GetPageSizeByIndexF(_doc, page, ref size) && size.width > 0 && size.height > 0)
+                return (size.width, size.height);
+        }
+        return GetPageSize(page);
+    }
+
     /// <summary>渲染页面在 [y0, y1]（pt）范围内的图像，输出 PNG 字节。</summary>
     public byte[] RenderPng(int page, float y0Points, float y1Points, int widthPx, int heightPx)
     {
@@ -177,6 +189,12 @@ public sealed class PdfNativeRenderer : IDisposable
         public float left, top, right, bottom;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FS_SIZEF
+    {
+        public float width, height;
+    }
+
     [DllImport("pdfium.dll", CallingConvention = CallingConvention.Cdecl)]
     private static extern void FPDF_InitLibrary();
 
@@ -200,6 +218,10 @@ public sealed class PdfNativeRenderer : IDisposable
 
     [DllImport("pdfium.dll", CallingConvention = CallingConvention.Cdecl)]
     private static extern float FPDF_GetPageHeightF(IntPtr page);
+
+    [DllImport("pdfium.dll", CallingConvention = CallingConvention.Cdecl)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool FPDF_GetPageSizeByIndexF(IntPtr document, int pageIndex, ref FS_SIZEF size);
 
     [DllImport("pdfium.dll", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr FPDFBitmap_Create(int width, int height, int alpha);

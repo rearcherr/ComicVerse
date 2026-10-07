@@ -59,8 +59,22 @@ public sealed class RarComicSource : IComicSource
 
     public (int Width, int Height)? GetPageSize(int index)
     {
-        using var stream = GetPageStream(index);
-        return ImageHelper.GetDimensions(stream);
+        if (index < 0 || index >= _entries.Count) return null;
+        lock (_readLock)
+        {
+            try
+            {
+                using var probe = _entries[index].OpenEntryStream();
+                var fast = ImageHelper.GetDimensionsFromPrefix(probe, out _);
+                if (fast is not null) return fast;
+            }
+            catch
+            {
+                // 忽略，退回完整读取
+            }
+            using var stream = _entries[index].OpenEntryStream();
+            return ImageHelper.GetDimensions(stream);
+        }
     }
 
     public void Dispose()

@@ -41,6 +41,18 @@ public sealed class FolderComicSource : IComicSource
 
     public (int Width, int Height)? GetPageSize(int index)
     {
+        if (index < 0 || index >= _files.Count) return null;
+        try
+        {
+            // 大图只读文件头部即可得到尺寸，避免整文件读入内存
+            using var fs = new FileStream(_files[index], FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 16);
+            var fast = ImageHelper.GetDimensionsFromPrefix(fs, out _);
+            if (fast is not null) return fast;
+        }
+        catch
+        {
+            // 忽略，退回完整读取
+        }
         using var stream = GetPageStream(index);
         return ImageHelper.GetDimensions(stream);
     }

@@ -70,6 +70,9 @@ public static class Program
             Run("封面生成", () => TestCoverGeneration(work));
             Run("漫画加载器缓存", () => TestComicLoader(samples.Cbz));
             Run("书库与进度", () => TestLibrary(samples));
+            Run("书库并发访问", () => TestLibraryConcurrency(samples));
+            Run("取尺寸只读头部", () => TestSizeProbe(work));
+            Run("文件夹导入", () => TestFolderImport(work));
 
             Console.WriteLine();
             Console.WriteLine($"通过 {_passed} 项，失败 {_failed} 项");
@@ -466,6 +469,119 @@ public static class Program
         }
     }
 
+    private static void TestLibraryConcurrency(Samples samples)
+    {
+        string db = Path.Combine(Path.GetTempPath(), "comicverse-conc-" + Guid.NewGuid().ToString("N")[..8] + ".db");
+        try
+        {
+            using var lib = new LibraryService(db);
+            var importer = new ImportService(lib);
+            var res = importer.ImportAsync(new[] { samples.Cbz, samples.Epub }).GetAwaiter().GetResult();
+            Assert(res.Imported == 2, "并发测试准备失败: " + res.Imported);
+            long comicId = lib.GetBooks().First(b => b.Type == BookType.Comic).Id;
+            long novelId = lib.GetBooks().First(b => b.Type == BookType.Novel).Id;
+
+            var errors = new System.Collections.Concurrent.ConcurrentBag<string>();
+            var tasks = new List<Task>();
+            for (int t = 0; t < 8; t++)
+            {
+                int kind = t % 4;
+                tasks.Add(Task.Run(() =>
+                {
+                    try
+                    {
+                        for (int i = 0; i < 200; i++)
+                        {
+                            switch (kind)
+                            {
+                                case 0:
+                                    lib.SaveProgress(comicId, i / 200.0, i % 10, 0, 0, "webtoon", 1.0);
+                                    break;
+                                case 1:
+                                    lib.GetProgress(novelId);
+                                    break;
+                                case 2:
+                                    lib.GetBooks();
+                                    break;
+                                default:
+                                    lib.SetSetting("conc_" + (i % 5), i.ToString());
+                                    break;
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        errors.Add(ex.GetType().Name + ": " + ex.Message);
+                    }
+                }));
+            }
+            Task.WaitAll(tasks.ToArray());
+            Assert(errors.Count == 0, "并发访问书库出错: " + string.Join(" | ", errors.Take(3)));
+        }
+        finally
+        {
+            try { File.Delete(db); } catch { }
+            try { File.Delete(db + "-wal"); } catch { }
+            try { File.Delete(db + "-shm"); } catch { }
+        }
+    }
+
+    private static void TestSizeProbe(string work)
+    {
+        // 图片头部已含尺寸信息，取尺寸不应读取整页数据（长漫画排版卡顿的关键）
+        string png = Path.Combine(work, "probe.png");
+        TestData.MakePng(png, 900, 1400, Color.FromRgb(200, 60, 90), "Probe");
+        byte[] bytes = File.ReadAllBytes(png);
+        using var ms = new MemoryStream();
+        ms.Write(bytes, 0, bytes.Length);
+        ms.Write(new byte[4 * 1024 * 1024]); // 模拟“长漫画大页”的尾部数据
+        ms.Position = 0;
+        var dim = ImageHelper.GetDimensionsFromPrefix(ms, out int read);
+        Assert(dim is { Width: 900, Height: 1400 }, "头部尺寸解析错误: " + dim);
+        Assert(read <= 384 * 1024, "尺寸探测读取过多数据: " + read);
+    }
+
+    private static void TestFolderImport(string work)
+    {
+        string db = Path.Combine(Path.GetTempPath(), "comicverse-folder-" + Guid.NewGuid().ToString("N")[..8] + ".db");
+        try
+        {
+            using var lib = new LibraryService(db);
+            var importer = new ImportService(lib);
+
+            // 夹内多个压缩包：每个压缩包应各自成为一本书，而不是被合并忽略
+            string archiveDir = Path.Combine(work, "import-archives");
+            Directory.CreateDirectory(archiveDir);
+            string vol1 = Path.Combine(archiveDir, "第01卷.cbz");
+            string vol2 = Path.Combine(archiveDir, "第02卷.cbz");
+            File.Copy(Path.Combine(work, "sample.cbz"), vol1);
+            File.Copy(Path.Combine(work, "sample.cbz"), vol2);
+            using (var fs = new FileStream(vol2, FileMode.Append, FileAccess.Write))
+                fs.Write(new byte[128]); // 让两本指纹不同，避免去重成一本
+
+            var res = importer.ImportAsync(new[] { archiveDir }).GetAwaiter().GetResult();
+            Assert(res.Failed.Count == 0, "文件夹导入失败: " + string.Join(";", res.Failed));
+            var comics = lib.GetBooks().Where(b => b.Type == BookType.Comic).ToList();
+            Assert(comics.Count == 2, "夹内压缩包未各自导入，实际漫画数: " + comics.Count);
+            Assert(comics.All(c => c.PageCount == 10), "夹内压缩包页数错误: " + string.Join(",", comics.Select(c => c.PageCount)));
+
+            // 图片文件夹仍然作为一本漫画导入
+            string imageDir = Path.Combine(work, "import-images");
+            Directory.CreateDirectory(imageDir);
+            for (int i = 1; i <= 3; i++)
+                TestData.MakePng(Path.Combine(imageDir, $"p{i}.png"), 400, 600, Color.FromRgb((byte)(60 * i), 90, 160), "P" + i);
+            importer.ImportAsync(new[] { imageDir }).GetAwaiter().GetResult();
+            var folderBook = lib.GetBooks().FirstOrDefault(b => string.Equals(b.FilePath, imageDir, StringComparison.OrdinalIgnoreCase));
+            Assert(folderBook is not null && folderBook.PageCount == 3, "图片文件夹未作为一本漫画导入");
+        }
+        finally
+        {
+            try { File.Delete(db); } catch { }
+            try { File.Delete(db + "-wal"); } catch { }
+            try { File.Delete(db + "-shm"); } catch { }
+        }
+    }
+
     private static void DumpPdfInfo(string path)
     {
         Console.WriteLine("PDF: " + path);
@@ -476,7 +592,10 @@ public static class Program
             var s = renderer.GetPageSize(i);
             Console.WriteLine($"  第 {i + 1} 页: {s.Width} x {s.Height} pt");
         }
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         using var source = new ComicVerse.Core.Comics.PdfComicSource(path);
+        sw.Stop();
+        Console.WriteLine($"建立阅读页索引用时: {sw.ElapsedMilliseconds}ms（{source.PageCount} 页）");
         Console.WriteLine("阅读页数（切片后）: " + source.PageCount);
         using var first = source.GetPageStream(0);
         var dim = ImageHelper.GetDimensions(first);

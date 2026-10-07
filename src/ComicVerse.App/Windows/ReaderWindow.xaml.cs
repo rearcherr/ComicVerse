@@ -140,7 +140,11 @@ public partial class ReaderWindow : Window
 
     private async Task InitComicAsync()
     {
-        _source = ComicSourceFactory.Create(_book.FilePath);
+        // 打开压缩包/PDF 可能耗时（枚举归档、逐页取尺寸），放到后台线程避免界面卡住
+        LoadingPanel.Visibility = Visibility.Visible;
+        LoadingText.Text = "正在打开…";
+        string path = _book.FilePath;
+        _source = await Task.Run(() => ComicSourceFactory.Create(path));
         int prefetch = App.Settings.LowPerformanceMode ? 1 : App.Settings.PrefetchPages;
         _loader = new ComicImageLoader(_source, App.SharedCache, prefetch);
 

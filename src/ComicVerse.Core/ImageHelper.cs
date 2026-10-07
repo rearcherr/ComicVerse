@@ -57,6 +57,31 @@ public static class ImageHelper
         }
     }
 
+    /// <summary>读取图片头部若干字节推断尺寸，避免为了取尺寸解压/读取整页数据。</summary>
+    public static (int Width, int Height)? GetDimensionsFromPrefix(Stream stream, out int bytesRead, int maxBytes = 384 * 1024)
+    {
+        bytesRead = 0;
+        try
+        {
+            var buffer = new byte[64 * 1024];
+            using var prefix = new MemoryStream();
+            while (bytesRead < maxBytes)
+            {
+                int read = stream.Read(buffer, 0, Math.Min(buffer.Length, maxBytes - bytesRead));
+                if (read <= 0) break;
+                prefix.Write(buffer, 0, read);
+                bytesRead += read;
+            }
+            if (bytesRead == 0) return null;
+            prefix.Position = 0;
+            return GetDimensions(prefix);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     public static BitmapSource ScaleToWidth(BitmapSource source, int targetWidth)
     {
         if (source.PixelWidth <= targetWidth) return source;

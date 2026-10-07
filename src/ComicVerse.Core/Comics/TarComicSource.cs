@@ -126,6 +126,22 @@ public sealed class TarComicSource : IComicSource
 
     public (int Width, int Height)? GetPageSize(int index)
     {
+        if (index < 0 || index >= _entries.Count) return null;
+        lock (_readLock)
+        {
+            try
+            {
+                var entry = _entries[index];
+                _fs.Position = entry.HeaderOffset + 512;
+                int probeBytes = (int)Math.Max(1, Math.Min(entry.Size, 384 * 1024));
+                var fast = ImageHelper.GetDimensionsFromPrefix(_fs, out _, probeBytes);
+                if (fast is not null) return fast;
+            }
+            catch
+            {
+                // 忽略，退回完整读取
+            }
+        }
         using var stream = GetPageStream(index);
         return ImageHelper.GetDimensions(stream);
     }

@@ -26,7 +26,7 @@ public sealed class PdfComicSource : IComicSource
             _renderer = new PdfNativeRenderer(path);
             for (int page = 0; page < _renderer.PageCount; page++)
             {
-                var (pw, ph) = _renderer.GetPageSize(page);
+                var (pw, ph) = _renderer.GetPageSizeByIndex(page);
                 if (pw <= 0 || ph <= 0) continue;
 
                 float aspect = ph / pw;

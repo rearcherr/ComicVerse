@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.IO;
+using System.Runtime.CompilerServices;
 using ComicVerse.Core.Models;
 using Microsoft.Data.Sqlite;
 
@@ -25,6 +26,7 @@ public sealed class LibraryService : IDisposable
         using var cmd = _conn.CreateCommand();
         cmd.CommandText = """
             PRAGMA journal_mode=WAL;
+            PRAGMA busy_timeout=5000;
             PRAGMA foreign_keys=ON;
             CREATE TABLE IF NOT EXISTS books (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -86,22 +88,26 @@ public sealed class LibraryService : IDisposable
         }
     }
 
+    [MethodImpl(MethodImplOptions.Synchronized)]
     public Book? GetBook(long id)
     {
         return QueryBooks("WHERE id = $p", new SqliteParameter("$p", id)).FirstOrDefault();
     }
 
+    [MethodImpl(MethodImplOptions.Synchronized)]
     public Book? GetBookByFingerprint(string fingerprint)
     {
         if (string.IsNullOrEmpty(fingerprint)) return null;
         return QueryBooks("WHERE fingerprint = $p", new SqliteParameter("$p", fingerprint)).FirstOrDefault();
     }
 
+    [MethodImpl(MethodImplOptions.Synchronized)]
     public Book? GetBookByPath(string path)
     {
         return QueryBooks("WHERE path = $p", new SqliteParameter("$p", path)).FirstOrDefault();
     }
 
+    [MethodImpl(MethodImplOptions.Synchronized)]
     public List<Book> GetBooks(string? search = null, string filter = "all", string sort = "recent", int limit = 0)
     {
         var where = new List<string>();
@@ -125,12 +131,14 @@ public sealed class LibraryService : IDisposable
         return QueryBooks(sql, pars.ToArray());
     }
 
+    [MethodImpl(MethodImplOptions.Synchronized)]
     public List<Book> GetRecent(int limit = 20)
     {
         return QueryBooks("WHERE last_read IS NOT NULL ORDER BY last_read DESC LIMIT $p",
             new SqliteParameter("$p", limit));
     }
 
+    [MethodImpl(MethodImplOptions.Synchronized)]
     public long UpsertBook(Book book)
     {
         using var cmd = _conn.CreateCommand();
@@ -172,6 +180,7 @@ public sealed class LibraryService : IDisposable
         return (long)cmd.ExecuteScalar()!;
     }
 
+    [MethodImpl(MethodImplOptions.Synchronized)]
     public void RemoveBook(long id)
     {
         using var cmd = _conn.CreateCommand();
@@ -180,6 +189,7 @@ public sealed class LibraryService : IDisposable
         cmd.ExecuteNonQuery();
     }
 
+    [MethodImpl(MethodImplOptions.Synchronized)]
     public ReadingProgress? GetProgress(long bookId)
     {
         using var cmd = _conn.CreateCommand();
@@ -199,6 +209,7 @@ public sealed class LibraryService : IDisposable
         };
     }
 
+    [MethodImpl(MethodImplOptions.Synchronized)]
     public void SaveProgress(long bookId, double progress, int pageIndex, double scroll, int chapterIndex,
         string mode = "", double zoom = 0)
     {
@@ -222,6 +233,7 @@ public sealed class LibraryService : IDisposable
         cmd.ExecuteNonQuery();
     }
 
+    [MethodImpl(MethodImplOptions.Synchronized)]
     public void AddBookmark(Bookmark bm)
     {
         using var cmd = _conn.CreateCommand();
@@ -234,6 +246,7 @@ public sealed class LibraryService : IDisposable
         cmd.ExecuteNonQuery();
     }
 
+    [MethodImpl(MethodImplOptions.Synchronized)]
     public List<Bookmark> GetBookmarks(long bookId)
     {
         var result = new List<Bookmark>();
@@ -256,6 +269,7 @@ public sealed class LibraryService : IDisposable
         return result;
     }
 
+    [MethodImpl(MethodImplOptions.Synchronized)]
     public void DeleteBookmark(long id)
     {
         using var cmd = _conn.CreateCommand();
@@ -264,6 +278,7 @@ public sealed class LibraryService : IDisposable
         cmd.ExecuteNonQuery();
     }
 
+    [MethodImpl(MethodImplOptions.Synchronized)]
     public string? GetSetting(string key)
     {
         using var cmd = _conn.CreateCommand();
@@ -272,6 +287,7 @@ public sealed class LibraryService : IDisposable
         return cmd.ExecuteScalar() as string;
     }
 
+    [MethodImpl(MethodImplOptions.Synchronized)]
     public void SetSetting(string key, string value)
     {
         using var cmd = _conn.CreateCommand();
@@ -281,12 +297,14 @@ public sealed class LibraryService : IDisposable
         cmd.ExecuteNonQuery();
     }
 
+    [MethodImpl(MethodImplOptions.Synchronized)]
     public void Backup(string? targetPath = null)
     {
         targetPath ??= Path.Combine(Path.GetDirectoryName(DbPath)!, $"library-backup-{DateTime.Now:yyyyMMdd-HHmmss}.db");
         File.Copy(DbPath, targetPath, overwrite: true);
     }
 
+    [MethodImpl(MethodImplOptions.Synchronized)]
     private List<Book> QueryBooks(string where, params SqliteParameter[] pars)
     {
         var result = new List<Book>();
@@ -317,6 +335,7 @@ public sealed class LibraryService : IDisposable
         return result;
     }
 
+    [MethodImpl(MethodImplOptions.Synchronized)]
     public void Dispose()
     {
         _conn.Dispose();

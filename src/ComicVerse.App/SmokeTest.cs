@@ -4,6 +4,7 @@ using System.IO.Compression;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using ComicVerse.App.Windows;
 using ComicVerse.Core.Models;
 
@@ -60,14 +61,23 @@ public static class SmokeTest
         string? comicError = null;
         string readerWebtoonStats = "";
         int readerWebtoonPages = 0;
+        double openStallMs = -1;
+        double sessionStallMs = -1;
+        double longPdfOpenSeconds = -1;
+        double longPdfStallMs = -1;
+
+        var stall = new StallProbe();
 
         if (comic is not null)
         {
+            stall.Start();
             var reader = new ReaderWindow(comic) { ShowInTaskbar = false };
             reader.Show();
             await Task.Delay(1600);
             reader.TestSwitchToPaged();
             await Task.Delay(700);
+            openStallMs = stall.MaxStallMs;
+            stall.Reset();
             comicReaderOk = reader.IsComicPageLoaded;
             Capture(reader, Path.Combine(outDir, "reader-paged.png"));
             // 快速翻页压力测试
@@ -154,6 +164,8 @@ public static class SmokeTest
             zoomTextRestored = reader3.ZoomTextValue == "150%";
             Capture(reader3, Path.Combine(outDir, "mode-zoom-restored.png"));
             reader3.Close();
+            sessionStallMs = stall.MaxStallMs;
+            stall.Stop();
         }
 
         if (novel is not null)
@@ -202,6 +214,26 @@ public static class SmokeTest
             }
         }
 
+        // 200 页长 PDF：打开过程不应阻塞界面（旧实现会在 UI 线程逐页调用渲染器）
+        string longPdf = CreateLongPdf(outDir, 200);
+        await App.Importer.ImportAsync(new[] { longPdf });
+        var longPdfBook = App.Library.GetBookByPath(Path.GetFullPath(longPdf));
+        if (longPdfBook is not null)
+        {
+            stall.Start();
+            var openSw = System.Diagnostics.Stopwatch.StartNew();
+            var reader = new ReaderWindow(longPdfBook) { ShowInTaskbar = false };
+            reader.Show();
+            await Task.Delay(1200);
+            reader.TestSwitchToPaged();
+            await Task.Delay(800);
+            openSw.Stop();
+            longPdfOpenSeconds = openSw.Elapsed.TotalSeconds;
+            longPdfStallMs = stall.MaxStallMs;
+            stall.Stop();
+            reader.Close();
+        }
+
         // 超长条漫 PDF：验证“翻页 → 条漫”切换不卡死（带超时保护）
         string tallPdf = Environment.GetEnvironmentVariable("COMICVERSE_SMOKE_TALL_PDF") ?? "";
         if (tallPdf.Length > 0 && File.Exists(tallPdf))
@@ -240,6 +272,8 @@ public static class SmokeTest
             $"缩放同步: 比例数字={zoomTextSyncOk}\n" +
             $"小说: 翻页进度={novelProgressOk} 浅色背景={novelLightThemeOk} 恢复进度={novelRestoreOk}\n" +
             $"关闭阅读器耗时: {closeSeconds:F1}s\n" +
+            $"界面卡顿: 打开漫画最大停顿 {openStallMs:F0}ms | 整个阅读过程最大停顿 {sessionStallMs:F0}ms\n" +
+            (longPdfOpenSeconds >= 0 ? $"200 页 PDF: 打开耗时 {longPdfOpenSeconds:F1}s，最大停顿 {longPdfStallMs:F0}ms\n" : "") +
             (tallPdf.Length > 0 ? $"超长 PDF 条漫切换: {tallWebtoonOk}（耗时 {tallWebtoonSeconds:F1}s，页数 {readerWebtoonPages}）\n" : "") +
             (webtoonOk ? "条漫诊断: " + readerWebtoonStats + "\n" : "") +
             (comicError is null ? "" : "异常: " + comicError + "\n") +
@@ -250,9 +284,11 @@ public static class SmokeTest
 
         bool tallOk = tallPdf.Length == 0 || tallWebtoonOk;
         bool closeOk = closeSeconds >= 0 && closeSeconds < 3;
+        // 界面停顿阈值（毫秒）：打开与阅读过程中都不应出现可感知的长时间卡死
+        bool stallOk = openStallMs >= 0 && openStallMs < 1500 && sessionStallMs < 2500 && (longPdfStallMs < 0 || longPdfStallMs < 1500);
         return comic is not null && novel is not null && comicReaderOk && pagingOk && farJumpOk &&
                webtoonOk && webtoonScrollOk && webtoonFarJumpOk &&
-               doubleOk && novelReaderOk && pdfReaderOk && tallOk && closeOk && defaultModeOk && defaultOpensWebtoon &&
+               doubleOk && novelReaderOk && pdfReaderOk && tallOk && closeOk && stallOk && defaultModeOk && defaultOpensWebtoon &&
                modePersisted && zoomPersisted && zoomTextSyncOk && zoomTextRestored &&
                novelProgressOk && novelLightThemeOk && novelRestoreOk ? 0 : 1;
     }
@@ -270,12 +306,12 @@ public static class SmokeTest
         enc.Save(fs);
     }
 
-    private static string CreateLongComic(string outDir)
+    private static string CreateLongComic(string outDir, int pageCount = 120)
     {
         string dir = Path.Combine(outDir, "long-gen");
         Directory.CreateDirectory(dir);
         var pages = new List<string>();
-        for (int i = 1; i <= 30; i++)
+        for (int i = 1; i <= pageCount; i++)
         {
             string p = Path.Combine(dir, $"p{i:000}.png");
             var visual = new DrawingVisual();
@@ -305,5 +341,89 @@ public static class SmokeTest
             ist.CopyTo(es);
         }
         return cbz;
+    }
+
+    /// <summary>生成多页 PDF，用于验证打开长 PDF 时界面不被阻塞。</summary>
+    private static string CreateLongPdf(string outDir, int pageCount)
+    {
+        const int pageWidth = 612;
+        const int pageHeight = 792;
+        var objects = new List<string>
+        {
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            $"<< /Type /Pages /Kids [{string.Join(" ", Enumerable.Range(0, pageCount).Select(i => $"{3 + i} 0 R"))}] /Count {pageCount} >>"
+        };
+        int fontObj = pageCount * 2 + 3;
+        for (int i = 0; i < pageCount; i++)
+        {
+            int contentObj = pageCount + 3 + i;
+            objects.Add($"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {pageWidth} {pageHeight}] /Contents {contentObj} 0 R /Resources << /Font << /F1 {fontObj} 0 R >> >> >>");
+        }
+        for (int i = 0; i < pageCount; i++)
+        {
+            string streamText = $"BT /F1 20 Tf 72 720 Td (Page {i + 1}) Tj ET";
+            objects.Add($"<< /Length {System.Text.Encoding.ASCII.GetByteCount(streamText)} >>\nstream\n{streamText}\nendstream");
+        }
+        objects.Add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append("%PDF-1.4\n");
+        var offsets = new long[objects.Count + 1];
+        for (int i = 0; i < objects.Count; i++)
+        {
+            offsets[i + 1] = sb.Length;
+            sb.Append(i + 1).Append(" 0 obj\n").Append(objects[i]).Append("\nendobj\n");
+        }
+        long xrefPos = sb.Length;
+        sb.Append("xref\n0 ").Append(objects.Count + 1).Append('\n');
+        sb.Append("0000000000 65535 f \n");
+        for (int i = 1; i <= objects.Count; i++)
+            sb.Append(offsets[i].ToString("D10", CultureInfo.InvariantCulture)).Append(" 00000 n \n");
+        sb.Append("trailer\n<< /Size ").Append(objects.Count + 1).Append(" /Root 1 0 R >>\nstartxref\n").Append(xrefPos).Append("\n%%EOF\n");
+        string path = Path.Combine(outDir, "long-200p.pdf");
+        File.WriteAllText(path, sb.ToString(), System.Text.Encoding.ASCII);
+        return path;
+    }
+
+    /// <summary>界面卡顿探针：记录 UI 线程两次心跳之间的最大间隔。</summary>
+    private sealed class StallProbe
+    {
+        private readonly System.Diagnostics.Stopwatch _sw = System.Diagnostics.Stopwatch.StartNew();
+        private readonly DispatcherTimer _timer;
+        private double _last;
+        private double _max;
+
+        public StallProbe()
+        {
+            _timer = new DispatcherTimer(DispatcherPriority.Send) { Interval = TimeSpan.FromMilliseconds(40) };
+            _timer.Tick += (_, _) =>
+            {
+                double now = _sw.Elapsed.TotalMilliseconds;
+                if (_last > 0)
+                {
+                    double gap = now - _last;
+                    if (gap > _max) _max = gap;
+                }
+                _last = now;
+            };
+        }
+
+        public double MaxStallMs => _max;
+
+        public void Start()
+        {
+            _max = 0;
+            _last = 0;
+            _sw.Restart();
+            _timer.Start();
+        }
+
+        public void Reset()
+        {
+            _max = 0;
+            _last = _sw.Elapsed.TotalMilliseconds;
+        }
+
+        public void Stop() => _timer.Stop();
     }
 }

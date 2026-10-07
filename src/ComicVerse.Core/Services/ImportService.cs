@@ -89,17 +89,20 @@ public sealed class ImportService
 
             var images = all.Where(ImageHelper.IsImageFile).ToList();
             var novels = all.Where(f => IsNovelFile(f)).ToList();
+            var archives = all.Where(f => IsComicFile(Path.GetExtension(f).ToLowerInvariant())).ToList();
+            bool hasRootImages = images.Any(f => string.Equals(Path.GetDirectoryName(f), folder, StringComparison.OrdinalIgnoreCase));
 
-            if (images.Count > 0)
+            // 根目录就是图片 → 整个文件夹作为一本漫画；
+            // 只有嵌套图片且夹内没有压缩包/PDF 时，同样按一本漫画导入（保持原有习惯）；
+            // 夹内若有压缩包/PDF，则它们才是真正的书，不再把整个文件夹合并成一本
+            if (hasRootImages || (archives.Count == 0 && (images.Count > 0 || novels.Count == 0)))
             {
-                // 图片在根目录 → 整个文件夹作为一本漫画；嵌套子目录的图片也算入
                 files.Add(folder);
             }
-            else if (novels.Count == 0)
-            {
-                // 没有任何可识别文件，仍尝试作为漫画导入以给出友好错误
-                files.Add(folder);
-            }
+
+            // 文件夹里的漫画压缩包 / PDF 各自作为一本书导入（此前会被整体忽略）
+            foreach (var a in archives)
+                files.Add(a);
 
             // 文件夹里的 txt/epub 单独作为小说导入（混合格式自动识别）
             foreach (var n in novels)
