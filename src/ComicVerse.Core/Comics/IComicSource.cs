@@ -17,12 +17,6 @@ public interface IComicSource : IDisposable
     (int Width, int Height)? GetPageSize(int index);
 }
 
-/// <summary>可选能力：直接产出位图，避免“渲染 → PNG 编码 → 再解码”的往返开销。</summary>
-public interface IPageBitmapSource
-{
-    System.Windows.Media.Imaging.BitmapSource? RenderPageBitmap(int index);
-}
-
 public sealed class ComicSourceException : Exception
 {
     public ComicSourceException(string message, Exception? inner = null) : base(message, inner)

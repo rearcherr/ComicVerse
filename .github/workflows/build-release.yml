@@ -20,6 +20,9 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      - name: Install Android workload
+        run: dotnet workload install android
+
       - name: Build
         run: dotnet build ComicVerse.slnx -c Release
 
@@ -50,10 +53,19 @@ jobs:
           Compress-Archive -Path './publish/ComicVerse.exe','./publish/使用说明.txt' -DestinationPath "ComicVerse-Portable-$($env:GITHUB_REF_NAME)-win-x64.zip"
           Get-ChildItem -Filter "ComicVerse-Portable-*" | Select-Object Name, Length
 
+      - name: Collect Android APK
+        shell: pwsh
+        run: |
+          $apk = 'src/ComicVerse.Android/bin/Release/net10.0-android/com.comicverse.reader-Signed.apk'
+          if (-not (Test-Path $apk)) { throw "APK 未生成: $apk" }
+          Copy-Item $apk "ComicVerse-$($env:GITHUB_REF_NAME)-android.apk"
+          Get-Item "ComicVerse-$($env:GITHUB_REF_NAME)-android.apk" | Select-Object Name, Length
+
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/v')
         with:
           files: |
             ComicVerse-Portable-${{ github.ref_name }}-win-x64.zip
+            ComicVerse-${{ github.ref_name }}-android.apk
             publish/ComicVerse.exe

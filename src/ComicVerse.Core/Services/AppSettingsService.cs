@@ -61,6 +61,13 @@ public sealed class AppSettingsService
         set => _library.SetSetting("auto_hide_bars", value ? "1" : "0");
     }
 
+    /// <summary>小说自动滚动速度（20–160）。</summary>
+    public int AutoScrollSpeed
+    {
+        get => int.TryParse(Get("auto_scroll_speed", "60"), out var v) ? Math.Clamp(v, 20, 160) : 60;
+        set => _library.SetSetting("auto_scroll_speed", Math.Clamp(value, 20, 160).ToString(CultureInfo.InvariantCulture));
+    }
+
     public string LibraryView
     {
         get => Get("library_view", "grid");

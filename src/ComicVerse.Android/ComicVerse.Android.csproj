@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-android</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>ComicVerse.Droid</RootNamespace>
+    <AssemblyName>ComicVerse</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <SupportedOSPlatformVersion>24</SupportedOSPlatformVersion>
+    <ApplicationId>com.comicverse.reader</ApplicationId>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+    <AndroidPackageFormat>apk</AndroidPackageFormat>
+    <RunAOTCompilation>false</RunAOTCompilation>
+    <AndroidEnableProfiledAot>false</AndroidEnableProfiledAot>
+    <NoWarn>$(NoWarn);XA0000</NoWarn>
+  </PropertyGroup>
+
+  <!-- Release 默认会打开 AOT，这里保持关闭：JIT 启动更快、构建更省事，APK 也更小 -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <AotAssemblies>false</AotAssemblies>
+    <RunAOTCompilation>false</RunAOTCompilation>
+    <AndroidEnableProfiledAot>false</AndroidEnableProfiledAot>
+    <!-- 关闭 ILLink 裁剪：.NET 10 Android 的裁剪链会要求一个未发布的宿主运行时包 -->
+    <AndroidLinkMode>None</AndroidLinkMode>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ComicVerse.Core\ComicVerse.Core.csproj" />
+  </ItemGroup>
+
+</Project>
