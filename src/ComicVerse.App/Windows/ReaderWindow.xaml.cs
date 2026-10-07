@@ -1010,14 +1010,6 @@ public partial class ReaderWindow : Window
         });
     }
 
-    /// <summary>翻页模式：滚轮翻页，页末/页首自动衔接上下章。</summary>
-    private void NovelPaged_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
-    {
-        if (_novel is null) return;
-        if (e.Delta < 0) NovelNext(); else NovelPrev();
-        e.Handled = true;
-    }
-
     /// <summary>章节边界衔接：delta = +1 下一章（从顶部开始），-1 上一章（停在章末）。返回是否发生了切换。</summary>
     private bool NovelScrollStep(int delta)
     {
