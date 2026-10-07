@@ -29,10 +29,13 @@ jobs:
       - name: Core tests
         run: dotnet run --project tests/ComicVerse.Tests/ComicVerse.Tests.csproj -c Release --no-build
 
+      # Core 现在同时面向 windows 与 android：带 -r 发布时必须限定框架，
+      # 否则会去还原 Mono 运行时包（Microsoft.NETCore.App.Runtime.Mono.win-x64）而失败
       - name: Publish single-file exe
         run: >
           dotnet publish src/ComicVerse.App/ComicVerse.App.csproj
           -c Release -r win-x64 --self-contained true
+          -p:TargetFrameworks=net10.0-windows
           -p:PublishSingleFile=true
           -p:IncludeNativeLibrariesForSelfExtract=true
           -p:EnableCompressionInSingleFile=true

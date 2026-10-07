@@ -258,9 +258,11 @@ public class WebtoonReaderView : View
         int last = Math.Min(_dims.Count - 1, BinarySearch(_tops, _scrollY + Height * 1.5f));
         for (int i = first; i <= last; i++)
         {
-            float top = _tops[i];
-            float height = _dims[i].H * (_canvasWidth / Math.Max(1, _dims[i].W));
-            var dst = new RectF(_scrollX, top, _scrollX + _canvasWidth, top + height);
+            // 按整像素取整 + 向下多铺 1px：相邻页高度是小数，抗锯齿会在交界处透出背景形成细白线
+            float top = MathF.Round(_tops[i]);
+            float nextTop = i + 1 < _tops.Count ? MathF.Round(_tops[i + 1]) : MathF.Round(_total);
+            float bottom = MathF.Max(top + 1f, nextTop) + 1f;
+            var dst = new RectF(_scrollX, top, _scrollX + _canvasWidth, bottom);
             if (_rendered.TryGetValue(i, out var bmp) && bmp is not null)
                 canvas.DrawBitmap(bmp, null, dst, _paint);
             else

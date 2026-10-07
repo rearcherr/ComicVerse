@@ -15,7 +15,7 @@ namespace ComicVerse.Droid;
 
 [Activity(Label = "ComicVerse",
     MainLauncher = true,
-    Icon = "@drawable/appicon",
+        Icon = "@mipmap/ic_launcher",
     Theme = "@android:style/Theme.DeviceDefault.NoActionBar",
     ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize |
                            ConfigChanges.ScreenLayout | ConfigChanges.KeyboardHidden | ConfigChanges.UiMode)]
