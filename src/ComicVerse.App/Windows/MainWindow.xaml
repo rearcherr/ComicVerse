@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:helpers="clr-namespace:ComicVerse.App.Helpers"
         Title="ComicVerse — 书架"
+        Icon="/Assets/appicon.png"
         Width="1280" Height="820" MinWidth="980" MinHeight="620"
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource WindowBgBrush}"
@@ -149,11 +150,8 @@
         <Border Grid.Row="0" Background="{DynamicResource HeaderGradientBrush}" Padding="20,10">
             <DockPanel>
                 <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Border Width="26" Height="26" CornerRadius="7" Background="{DynamicResource AccentSolidBrush}"
-                            VerticalAlignment="Center">
-                        <TextBlock Text="C" FontSize="15" FontWeight="Bold" Foreground="White"
-                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </Border>
+                    <Image Source="/Assets/appicon.png" Width="28" Height="28" VerticalAlignment="Center"
+                           RenderOptions.BitmapScalingMode="HighQuality"/>
                     <TextBlock Text="ComicVerse" FontSize="18" FontWeight="Bold"
                                Foreground="{DynamicResource TextPrimaryBrush}"
                                Margin="10,0,0,0" VerticalAlignment="Center"/>

@@ -9,10 +9,15 @@
     <UseWPF>true</UseWPF>
     <AssemblyName>ComicVerse</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\appicon.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\ComicVerse.Core\ComicVerse.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\appicon.png" />
   </ItemGroup>
 
 </Project>
