@@ -76,6 +76,7 @@ public static class SmokeTest
         bool zoomTextSyncOk = false;
         bool zoomTextRestored = false;
         bool novelProgressOk = false;
+        bool novelScrollChapterOk = false;
         bool novelLightThemeOk = false;
         bool novelRestoreOk = false;
         double closeSeconds = -1;
@@ -232,6 +233,19 @@ public static class SmokeTest
             reader.TestNovelNextPage();
             reader.TestNovelNextChapter();
             await Task.Delay(700);
+            // 滚动模式：滚到章末继续下滑应自动进入下一章
+            reader.NovelModeScroll.IsChecked = true;
+            await Task.Delay(600);
+            reader.TestNovelGoToChapter(0);          // 回到第 1 章，确保后面还有下一章
+            await Task.Delay(600);
+            int chapterBeforeScroll = reader.NovelChapterIndex;
+            reader.TestNovelScrollToEdge(true);
+            await Task.Delay(700);
+            bool stepped = reader.TestNovelScrollStep(1);
+            await Task.Delay(600);
+            novelScrollChapterOk = stepped && reader.NovelChapterIndex == chapterBeforeScroll + 1;
+            reader.NovelModePaged.IsChecked = true;
+            await Task.Delay(400);
             int novelChapterBefore = reader.NovelChapterIndex;
             novelProgressOk = novelChapterBefore >= 1;
             reader.TestToggleTheme();
@@ -340,7 +354,7 @@ public static class SmokeTest
             $"默认阅读方式: 条漫={defaultModeOk} 打开即条漫={defaultOpensWebtoon}\n" +
             $"按书记忆: 翻页模式={modePersisted} 缩放150%={zoomPersisted} 比例数字={zoomTextRestored}\n" +
             $"缩放同步: 比例数字={zoomTextSyncOk}\n" +
-            $"小说: 翻页进度={novelProgressOk} 浅色背景={novelLightThemeOk} 恢复进度={novelRestoreOk}\n" +
+            $"小说: 翻页进度={novelProgressOk} 滚动接章={novelScrollChapterOk} 浅色背景={novelLightThemeOk} 恢复进度={novelRestoreOk}\n" +
             $"关闭阅读器耗时: {closeSeconds:F1}s\n" +
             $"界面卡顿: 打开漫画最大停顿 {openStallMs:F0}ms | 整个阅读过程最大停顿 {sessionStallMs:F0}ms\n" +
             $"浅色主题顶栏对比度: {lightHeaderOk}\n" +
@@ -367,7 +381,7 @@ public static class SmokeTest
                sliderDragOk &&
                doubleOk && novelReaderOk && pdfReaderOk && tallOk && closeOk && stallOk && defaultModeOk && defaultOpensWebtoon &&
                modePersisted && zoomPersisted && zoomTextSyncOk && zoomTextRestored &&
-               novelProgressOk && novelLightThemeOk && novelRestoreOk ? 0 : 1;
+               novelProgressOk && novelScrollChapterOk && novelLightThemeOk && novelRestoreOk ? 0 : 1;
     }
 
     private static void Capture(Window window, string path)

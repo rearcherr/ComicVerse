@@ -1,7 +1,7 @@
 # ComicVerse — 二次元漫画 & 轻小说阅读器
 
-基于 PRD（`ComicVerse-PRD-v1.0.md`）实现的第一版阅读器：Windows 桌面端（C# / .NET 10 / WPF）
-与安卓端（C# / .NET 10 for Android），两端共用同一套核心逻辑 `src/ComicVerse.Core`。
+基于 PRD（`ComicVerse-PRD-v1.0.md`）实现的阅读器：Windows 桌面端（C# / .NET 10 / WPF），
+核心逻辑集中在 `src/ComicVerse.Core`。
 
 ## 功能一览
 
@@ -58,43 +58,6 @@ dotnet publish src/ComicVerse.App/ComicVerse.App.csproj -c Release -r win-x64 --
 ```powershell
 dotnet run --project tests/ComicVerse.Tests/ComicVerse.Tests.csproj -- --samples
 ```
-
-## 安卓端（APK）
-
-安卓版与桌面端功能对齐：同样的书架（网格/列表、筛选、排序、搜索）、三种漫画阅读模式
-（翻页 / 条漫 / 双页）、小说阅读（翻页 / 滚动、排版自定义、TXT 编码覆盖）、进度续读、
-书签、深浅主题。格式支持 CBZ/ZIP、CBR/RAR、CBT/TAR、CB7/7Z、PDF（系统 PdfRenderer，
-长条漫自动切片）、TXT、EPUB 与图片文件夹。
-
-与桌面端的差异（安卓沙盒所致）：
-
-- 导入通过系统文件选择器（SAF）完成，文件会复制进应用私有目录 `Android/data`，之后即可离线阅读
-- 双指缩放、双击缩放、单指拖动平移替代鼠标滚轮；点击屏幕中央切换工具栏，左右 1/3 区域翻页
-- 阅读快捷键（←/→/F/B/M 等）为桌面端专属，安卓端用界面按钮
-
-### 构建 APK
-
-需要 .NET 10 SDK + `android` 工作负载 + JDK 17+ 与 Android SDK（API 36）：
-```powershell
-dotnet workload install android
-dotnet build src/ComicVerse.Android/ComicVerse.Android.csproj -c Release -f net10.0-android -t:SignAndroidPackage
-```
-产物：`src/ComicVerse.Android/bin/Release/net10.0-android/com.comicverse.reader-Signed.apk`
-（arm64-v8a + x86_64，minSdk 24 / targetSdk 36，使用调试证书签名，可直接侧载安装）。
-
-安装到设备：
-```powershell
-adb install -r src/ComicVerse.Android/bin/Release/net10.0-android/com.comicverse.reader-Signed.apk
-```
-
-推送 `v*` 标签时，GitHub Actions 会同时构建免安装版 exe 与安卓 APK 并附到 Release。
-
-### 安卓端代码结构
-
-- `src/ComicVerse.Core/` — 两端共用的核心：书库 SQLite、导入去重、压缩包/PDF/EPUB/TXT 解析、进度书签
-  - `ImageHelper.cs`、`Services/CoverGenerator.cs`、`Comics/PdfComicSource.cs` 等是桌面端（WPF 位图）实现
-  - `Android/` 下是同名 API 的安卓实现（BitmapFactory / Canvas / PdfRenderer）
-- `src/ComicVerse.Android/` — 安卓界面：书架、阅读器（翻页/条漫/双页/小说）、设置与导入
 
 ## 测试与自检
 

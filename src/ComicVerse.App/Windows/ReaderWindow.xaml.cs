@@ -750,8 +750,10 @@ public partial class ReaderWindow : Window
     {
         if (_novelSubMode == "scroll")
         {
+            if (NovelScrollStep(-1)) return;   // 已在章首 → 接上一章
             var sv = VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll);
             if (sv is not null) sv.ScrollToVerticalOffset(sv.VerticalOffset - sv.ViewportHeight * 0.9);
+            UpdateNovelInfo();
             return;
         }
         _novelPage = Math.Max(0, _novelPage - 1);
@@ -764,8 +766,10 @@ public partial class ReaderWindow : Window
     {
         if (_novelSubMode == "scroll")
         {
+            if (NovelScrollStep(+1)) return;   // 已在章末 → 接下一章
             var sv = VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll);
             if (sv is not null) sv.ScrollToVerticalOffset(sv.VerticalOffset + sv.ViewportHeight * 0.9);
+            UpdateNovelInfo();
             return;
         }
         int pages = _chapterPages.GetValueOrDefault(_novelChapter, 1);
@@ -964,6 +968,7 @@ public partial class ReaderWindow : Window
             {
                 var sv = VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll);
                 if (sv is null) return;
+                if (NovelScrollStep(+1)) return;   // 一章读完自动接着下一章
                 sv.ScrollToVerticalOffset(sv.VerticalOffset + AutoSpeedSlider.Value * 0.08);
                 UpdateNovelInfo();
             };
@@ -986,6 +991,43 @@ public partial class ReaderWindow : Window
     private void NovelScroll_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
     {
         StopAutoScroll();
+        // 滚到章末继续下滑 → 下一章；滚到章首继续上滑 → 上一章（停在章末）
+        NovelScrollStep(e.Delta < 0 ? 1 : -1);
+    }
+
+    /// <summary>章节边界衔接：delta = +1 下一章（从顶部开始），-1 上一章（停在章末）。返回是否发生了切换。</summary>
+    private bool NovelScrollStep(int delta)
+    {
+        if (_novel is null || _novelSubMode != "scroll") return false;
+        var sv = VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll);
+        if (sv is null) return false;
+        double height = sv.ScrollableHeight;
+        bool fitsOnScreen = height <= 1;                     // 本章短到不需要滚动：上下都算边界
+        bool atBottom = fitsOnScreen || height - sv.VerticalOffset < 1.5;
+        bool atTop = fitsOnScreen || sv.VerticalOffset < 1.5;
+        if (delta > 0 && atBottom)
+        {
+            if (_novelChapter >= _novel.Chapters.Count - 1) return false;
+            LoadNovelChapter(_novelChapter + 1);
+            return true;
+        }
+        if (delta < 0 && atTop)
+        {
+            if (_novelChapter <= 0) return false;
+            _novelScrollFraction = 1.0;                       // 上一章停在末尾
+            LoadNovelChapter(_novelChapter - 1, resetPosition: false);
+            return true;
+        }
+        return false;
+    }
+
+    internal bool TestNovelScrollStep(int delta) => NovelScrollStep(delta);
+    internal void TestNovelGoToChapter(int index) => LoadNovelChapter(index);
+    internal void TestNovelScrollToEdge(bool bottom)
+    {
+        var sv = VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll);
+        if (sv is null) return;
+        sv.ScrollToVerticalOffset(bottom ? sv.ScrollableHeight : 0);
     }
 
     #endregion
