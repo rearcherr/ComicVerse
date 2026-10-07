@@ -8,6 +8,10 @@
                       PanningMode="VerticalOnly"
                       ScrollChanged="OnScrollChanged"
                       PreviewMouseWheel="OnPreviewMouseWheel"
+                      PreviewMouseLeftButtonDown="OnPreviewMouseLeftButtonDown"
+                      PreviewMouseMove="OnPreviewMouseMove"
+                      PreviewMouseLeftButtonUp="OnPreviewMouseLeftButtonUp"
+                      LostMouseCapture="OnLostMouseCapture"
                       Background="{DynamicResource ReaderBgBrush}">
             <!-- UseLayoutRounding：让每页的位置与高度按设备像素取整，避免相邻页之间出现亚像素接缝（细白线） -->
             <Canvas x:Name="RootCanvas" Background="Transparent" UseLayoutRounding="True" SnapsToDevicePixels="True"/>

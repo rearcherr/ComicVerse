@@ -31,6 +31,13 @@ public partial class WebtoonViewer : UserControl
     private int _visibleLast = -1;
     private bool _smoothing;
     private DispatcherTimer? _smoothTimer;
+    private readonly System.Diagnostics.Stopwatch _dragClock = System.Diagnostics.Stopwatch.StartNew();
+    private bool _dragging;
+    private double _dragStartY;
+    private double _dragStartOffset;
+    private double _dragLastY;
+    private double _dragLastMs;
+    private double _dragVelocity;
 
     public event Action<int>? CurrentPageChanged;
     public event Action? LayoutReady;
@@ -130,6 +137,91 @@ public partial class WebtoonViewer : UserControl
     }
 
     internal void HideLoading() => LoadingOverlay.Visibility = Visibility.Collapsed;
+
+    // ---- 鼠标左键拖拽滑动（条漫）----
+
+    private void OnPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (!_layoutReady) return;
+        BeginDrag(e.GetPosition(this).Y);
+        CaptureMouse();
+        Cursor = Cursors.SizeAll;
+        e.Handled = true;
+    }
+
+    private void OnPreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_dragging) return;
+        DragTo(e.GetPosition(this).Y);
+        e.Handled = true;
+    }
+
+    private void OnPreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (!_dragging) return;
+        EndDrag();
+        if (IsMouseCaptured) ReleaseMouseCapture();
+        Cursor = Cursors.Arrow;
+        e.Handled = true;
+    }
+
+    private void OnLostMouseCapture(object sender, MouseEventArgs e)
+    {
+        if (!_dragging) return;
+        EndDrag();
+        Cursor = Cursors.Arrow;
+    }
+
+    /// <summary>开始拖拽：记录起点与当前滚动位置。</summary>
+    private void BeginDrag(double y)
+    {
+        CancelSmoothScroll();
+        _dragging = true;
+        _dragStartY = y;
+        _dragStartOffset = Scroll.VerticalOffset;
+        _dragLastY = y;
+        _dragLastMs = _dragClock.Elapsed.TotalMilliseconds;
+        _dragVelocity = 0;
+    }
+
+    /// <summary>拖拽中：内容跟随鼠标 1:1 位移，并估算速度用于松手后的惯性。</summary>
+    private void DragTo(double y)
+    {
+        if (!_dragging) return;
+        double now = _dragClock.Elapsed.TotalMilliseconds;
+        double dt = now - _dragLastMs;
+        if (dt > 0.5)
+        {
+            double v = (y - _dragLastY) / dt;          // 像素/毫秒
+            _dragVelocity = _dragVelocity * 0.6 + v * 0.4;
+            _dragLastY = y;
+            _dragLastMs = now;
+        }
+        Scroll.ScrollToVerticalOffset(_dragStartOffset - (y - _dragStartY));
+    }
+
+    /// <summary>松手：速度够快就交给已有的缓动定时器继续滑一段。</summary>
+    private void EndDrag()
+    {
+        if (!_dragging) return;
+        _dragging = false;
+        if (Math.Abs(_dragVelocity) > 0.25)
+        {
+            double target = Scroll.VerticalOffset - _dragVelocity * 320;
+            _scrollTarget = Math.Clamp(target, 0, Math.Max(0, Scroll.ScrollableHeight));
+            StartSmoothScroll();
+        }
+        _dragVelocity = 0;
+    }
+
+    /// <summary>自检钩子：分多步模拟向下拖拽 dy 像素（步进够密可避免触发惯性）。</summary>
+    internal void TestDragDown(double dy, int steps = 12)
+    {
+        BeginDrag(300);
+        for (int i = 1; i <= steps; i++)
+            DragTo(300 + dy * i / steps);
+        EndDrag();
+    }
 
     private void OnPreviewMouseWheel(object sender, MouseWheelEventArgs e)
     {

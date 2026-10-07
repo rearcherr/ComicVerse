@@ -86,6 +86,7 @@ public partial class ReaderWindow : Window
     internal void TestWebtoonScrollBy(double dy) => WebtoonView.ScrollBy(dy);
     internal void TestJumpToPage(int page) => LoadPageAsync(page);
     internal void TestWebtoonJumpTo(int page) => WebtoonView.ScrollToPage(page);
+    internal void TestWebtoonDragDown(double dy) => WebtoonView.TestDragDown(dy);
     internal int WebtoonRenderedCount => WebtoonView.RenderedCount;
     internal int WebtoonRenderedLoadedCount => WebtoonView.RenderedWithSourceCount;
     internal int WebtoonBlankStripCount => WebtoonView.RenderedWithoutSourceCount;

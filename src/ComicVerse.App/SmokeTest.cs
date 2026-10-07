@@ -59,6 +59,7 @@ public static class SmokeTest
         bool webtoonScrollOk = false;
         bool farJumpOk = false;
         bool webtoonFarJumpOk = false;
+        bool webtoonDragOk = false;
         int webtoonSeamRows = -1;
         bool sliderDragOk = false;
         int sliderDragBlank = -1;
@@ -143,6 +144,12 @@ public static class SmokeTest
                 webtoonFarJumpOk = reader.IsWebtoonReady && reader.WebtoonRenderedCount > 0
                     && reader.WebtoonRenderedLoadedCount > 0 && reader.CurrentPageNumber == last;
                 webtoonSeamRows = BackgroundRowCount(reader); // 相邻页之间不应漏出背景（细白线）
+                // 鼠标左键拖拽滑动：向下拖 180px，滚动偏移应同步上移约 180px
+                double beforeDrag = reader.WebtoonScrollOffset;
+                reader.TestWebtoonDragDown(180);
+                await Task.Delay(500); // 滚动偏移是延迟生效的，等它落地再比较
+                double dragDelta = reader.WebtoonScrollOffset - beforeDrag;
+                webtoonDragOk = Math.Abs(dragDelta + 180) < 60;
                 Capture(reader, Path.Combine(outDir, "reader-webtoon-far-jump.png"));
                 // 大幅拖动进度条：松手后视口内的每一屏都必须真正加载出图片（不能空白）
                 reader.TestSliderDrag(0.05, 0.92);
@@ -336,6 +343,7 @@ public static class SmokeTest
             $"浅色主题顶栏对比度: {lightHeaderOk}\n" +
             $"导入后书架立即刷新: {shelfRefreshOk}\n" +
             $"条漫页间接缝检测（背景色行数）: {webtoonSeamRows}\n" +
+            $"条漫鼠标拖拽滑动: {webtoonDragOk}\n" +
             (longPdfOpenSeconds >= 0 ? $"200 页 PDF: 打开耗时 {longPdfOpenSeconds:F1}s，最大停顿 {longPdfStallMs:F0}ms\n" : "") +
             (tallPdf.Length > 0 ? $"超长 PDF 条漫切换: {tallWebtoonOk}（耗时 {tallWebtoonSeconds:F1}s，页数 {readerWebtoonPages}）\n" : "") +
             (webtoonOk ? "条漫诊断: " + readerWebtoonStats + "\n" : "") +
@@ -351,6 +359,7 @@ public static class SmokeTest
         bool stallOk = openStallMs >= 0 && openStallMs < 1500 && sessionStallMs < 2500 && (longPdfStallMs < 0 || longPdfStallMs < 1500);
         return comic is not null && novel is not null && comicReaderOk && pagingOk && farJumpOk &&
                lightHeaderOk && shelfRefreshOk && webtoonSeamRows == 0 &&
+               webtoonDragOk &&
                webtoonOk && webtoonScrollOk && webtoonFarJumpOk &&
                sliderDragOk &&
                doubleOk && novelReaderOk && pdfReaderOk && tallOk && closeOk && stallOk && defaultModeOk && defaultOpensWebtoon &&
