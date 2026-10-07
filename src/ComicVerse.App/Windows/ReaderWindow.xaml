@@ -23,7 +23,7 @@
                 BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1" Padding="14,8">
             <DockPanel>
                 <Button DockPanel.Dock="Left" Style="{StaticResource IconButton}" ToolTip="返回书架 (Esc)" Click="Back_Click">
-                    <TextBlock Text="◀" FontSize="15" Foreground="{DynamicResource TextPrimaryBrush}"/>
+                    <TextBlock Text="&#xE72B;" FontFamily="{StaticResource IconFont}" FontSize="15" Foreground="{DynamicResource TextPrimaryBrush}"/>
                 </Button>
                 <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" Margin="10,0,0,0" VerticalAlignment="Center">
                     <TextBlock x:Name="TitleText" Style="{StaticResource SectionTitleText}" MaxWidth="420"
@@ -36,19 +36,19 @@
 
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                     <Button x:Name="BookmarkButton" Style="{StaticResource IconButton}" ToolTip="书签 (B)" Click="BookmarkButton_Click">
-                        <TextBlock Text="★" FontSize="16" Foreground="{DynamicResource TextPrimaryBrush}"/>
+                        <TextBlock Text="&#xE734;" FontFamily="{StaticResource IconFont}" FontSize="15" Foreground="{DynamicResource TextPrimaryBrush}"/>
                     </Button>
                     <Button x:Name="ChaptersButton" Style="{StaticResource IconButton}" ToolTip="章节目录" Click="ChaptersButton_Click" Visibility="Collapsed">
-                        <TextBlock Text="☷" FontSize="16" Foreground="{DynamicResource TextPrimaryBrush}"/>
+                        <TextBlock Text="&#xE8FD;" FontFamily="{StaticResource IconFont}" FontSize="15" Foreground="{DynamicResource TextPrimaryBrush}"/>
                     </Button>
                     <Button x:Name="SettingsPanelButton" Style="{StaticResource IconButton}" ToolTip="排版设置" Click="SettingsPanelButton_Click" Visibility="Collapsed">
-                        <TextBlock Text="🅐" FontSize="15" Foreground="{DynamicResource TextPrimaryBrush}"/>
+                        <TextBlock Text="&#xE70F;" FontFamily="{StaticResource IconFont}" FontSize="15" Foreground="{DynamicResource TextPrimaryBrush}"/>
                     </Button>
                     <Button Style="{StaticResource IconButton}" ToolTip="深浅主题" Click="Theme_Click">
-                        <TextBlock x:Name="ReaderThemeGlyph" Text="☾" FontSize="15" Foreground="{DynamicResource TextPrimaryBrush}"/>
+                        <TextBlock x:Name="ReaderThemeGlyph" Text="&#xE708;" FontFamily="{StaticResource IconFont}" FontSize="15" Foreground="{DynamicResource TextPrimaryBrush}"/>
                     </Button>
                     <Button Style="{StaticResource IconButton}" ToolTip="全屏 (F)" Click="Fullscreen_Click">
-                        <TextBlock Text="⛶" FontSize="15" Foreground="{DynamicResource TextPrimaryBrush}"/>
+                        <TextBlock Text="&#xE740;" FontFamily="{StaticResource IconFont}" FontSize="15" Foreground="{DynamicResource TextPrimaryBrush}"/>
                     </Button>
                 </StackPanel>
 
@@ -60,7 +60,7 @@
                     <RadioButton x:Name="ModeDouble" Style="{StaticResource SegmentRadio}" Content="双页" GroupName="ReaderMode"
                                  Checked="Mode_Changed" Tag="double"/>
                     <Button x:Name="RtlButton" Style="{StaticResource IconButton}" ToolTip="日漫右→左方向" Click="Rtl_Click" Margin="8,0,0,0">
-                        <TextBlock x:Name="RtlGlyph" Text="⇄" FontSize="15" Foreground="{DynamicResource TextPrimaryBrush}"/>
+                        <TextBlock x:Name="RtlGlyph" Text="RTL" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}"/>
                     </Button>
                 </StackPanel>
             </DockPanel>
@@ -95,7 +95,7 @@
 
                 <StackPanel x:Name="LoadingPanel" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"
                             Background="Transparent" Cursor="Hand" MouseLeftButtonDown="LoadingPanel_MouseLeftButtonDown">
-                    <TextBlock Text="◌" FontSize="34" Foreground="{DynamicResource TextFaintBrush}" HorizontalAlignment="Center"/>
+                    <TextBlock Text="&#xE895;" FontFamily="{StaticResource IconFont}" FontSize="28" Foreground="{DynamicResource TextFaintBrush}" HorizontalAlignment="Center"/>
                     <TextBlock x:Name="LoadingText" Text="正在加载…" FontSize="12" Foreground="{DynamicResource TextFaintBrush}"
                                HorizontalAlignment="Center" Margin="0,10,0,0"/>
                 </StackPanel>
@@ -121,7 +121,7 @@
                     <Image x:Name="RightImage" Stretch="None" RenderOptions.BitmapScalingMode="HighQuality"/>
                 </ScrollViewer>
                 <StackPanel x:Name="DoubleLoading" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed">
-                    <TextBlock Text="◌" FontSize="34" Foreground="{DynamicResource TextFaintBrush}" HorizontalAlignment="Center"/>
+                    <TextBlock Text="&#xE895;" FontFamily="{StaticResource IconFont}" FontSize="28" Foreground="{DynamicResource TextFaintBrush}" HorizontalAlignment="Center"/>
                     <TextBlock Text="正在加载…" FontSize="12" Foreground="{DynamicResource TextFaintBrush}"
                                HorizontalAlignment="Center" Margin="0,10,0,0"/>
                 </StackPanel>
@@ -271,7 +271,7 @@
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="书签" Style="{StaticResource SectionTitleText}"/>
                         <Button Grid.Column="1" Style="{StaticResource IconButton}" ToolTip="关闭" Click="BookmarkPanelClose_Click">
-                            <TextBlock Text="✕" FontSize="13"/>
+                            <TextBlock Text="&#xE711;" FontFamily="{StaticResource IconFont}" FontSize="12"/>
                         </Button>
                     </Grid>
                     <Button DockPanel.Dock="Bottom" Style="{StaticResource BaseButton}" Content="＋ 添加当前页书签" Margin="12,0,12,12"
@@ -316,29 +316,29 @@
             <DockPanel>
                 <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button x:Name="PrevButton" Style="{StaticResource IconButton}" ToolTip="上一页 (←/PageUp)" Click="Prev_Click">
-                        <TextBlock Text="◀" FontSize="14"/>
+                        <TextBlock Text="&#xE76B;" FontFamily="{StaticResource IconFont}" FontSize="13"/>
                     </Button>
                     <Button x:Name="NextButton" Style="{StaticResource IconButton}" ToolTip="下一页 (→/PageDown)" Click="Next_Click" Margin="4,0,0,0">
-                        <TextBlock Text="▶" FontSize="14"/>
+                        <TextBlock Text="&#xE76C;" FontFamily="{StaticResource IconFont}" FontSize="13"/>
                     </Button>
                 </StackPanel>
 
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button x:Name="ZoomOutButton" Style="{StaticResource IconButton}" ToolTip="缩小 (-)" Click="ZoomOut_Click" Visibility="Collapsed">
-                        <TextBlock Text="−" FontSize="15"/>
+                        <TextBlock Text="&#xE738;" FontFamily="{StaticResource IconFont}" FontSize="13"/>
                     </Button>
                     <TextBlock x:Name="ZoomText" Text="100%" FontSize="11" VerticalAlignment="Center" Margin="6,0"
                                Foreground="{DynamicResource TextSecondaryBrush}" Visibility="Collapsed"/>
                     <Slider x:Name="ZoomSlider" Width="130" Minimum="20" Maximum="300" Value="100" Visibility="Collapsed"
                             ValueChanged="ZoomSlider_ValueChanged" VerticalAlignment="Center"/>
                     <Button x:Name="ZoomInButton" Style="{StaticResource IconButton}" ToolTip="放大 (+)" Click="ZoomIn_Click" Visibility="Collapsed">
-                        <TextBlock Text="＋" FontSize="14"/>
+                        <TextBlock Text="&#xE710;" FontFamily="{StaticResource IconFont}" FontSize="13"/>
                     </Button>
                     <Button x:Name="FitWidthButton" Style="{StaticResource IconButton}" ToolTip="适应宽度" Click="FitWidth_Click" Margin="8,0,0,0" Visibility="Collapsed">
-                        <TextBlock Text="⇔" FontSize="14"/>
+                        <TextBlock Text="宽" FontSize="12"/>
                     </Button>
                     <Button x:Name="FitPageButton" Style="{StaticResource IconButton}" ToolTip="适应整页" Click="FitPage_Click" Margin="4,0,0,0" Visibility="Collapsed">
-                        <TextBlock Text="⛶" FontSize="13"/>
+                        <TextBlock Text="页" FontSize="12"/>
                     </Button>
                     <Button x:Name="ActualButton" Style="{StaticResource IconButton}" ToolTip="原始大小" Click="Actual_Click" Margin="4,0,0,0" Visibility="Collapsed">
                         <TextBlock Text="1:1" FontSize="11"/>

@@ -149,18 +149,26 @@
         <Border Grid.Row="0" Background="{DynamicResource HeaderGradientBrush}" Padding="20,10">
             <DockPanel>
                 <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Text="✦" FontSize="22" Foreground="White" VerticalAlignment="Center"/>
-                    <TextBlock Text="ComicVerse" FontSize="18" FontWeight="Bold" Foreground="White"
-                               Margin="8,0,0,0" VerticalAlignment="Center"/>
-                    <TextBlock Text="二次元漫画 · 轻小说阅读器" FontSize="11" Foreground="#E8DFF5"
+                    <Border Width="26" Height="26" CornerRadius="7" Background="{DynamicResource AccentSolidBrush}"
+                            VerticalAlignment="Center">
+                        <TextBlock Text="C" FontSize="15" FontWeight="Bold" Foreground="White"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <TextBlock Text="ComicVerse" FontSize="18" FontWeight="Bold"
+                               Foreground="{DynamicResource TextPrimaryBrush}"
+                               Margin="10,0,0,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="漫画与轻小说阅读器" FontSize="11"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
                                Margin="10,0,0,2" VerticalAlignment="Bottom"/>
                 </StackPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button x:Name="ThemeButton" Style="{StaticResource IconButton}" ToolTip="切换深浅主题" Click="ThemeButton_Click">
-                        <TextBlock Text="☾" FontSize="16" Foreground="White"/>
+                        <TextBlock Text="&#xE708;" FontFamily="{StaticResource IconFont}" FontSize="15"
+                                   Foreground="{DynamicResource TextPrimaryBrush}"/>
                     </Button>
                     <Button Style="{StaticResource IconButton}" ToolTip="设置" Click="SettingsButton_Click" Margin="4,0,0,0">
-                        <TextBlock Text="⚙" FontSize="16" Foreground="White"/>
+                        <TextBlock Text="&#xE713;" FontFamily="{StaticResource IconFont}" FontSize="15"
+                                   Foreground="{DynamicResource TextPrimaryBrush}"/>
                     </Button>
                 </StackPanel>
             </DockPanel>
@@ -170,15 +178,26 @@
                 BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1">
             <DockPanel>
                 <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
-                    <Button Style="{StaticResource AccentButton}" Click="AddFiles_Click" Content="＋ 添加文件"/>
-                    <Button Style="{StaticResource BaseButton}" Click="AddFolder_Click" Content="＋ 添加文件夹" Margin="10,0,0,0"/>
+                    <Button Style="{StaticResource AccentButton}" Click="AddFiles_Click">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE710;" FontFamily="{StaticResource IconFont}" FontSize="12" VerticalAlignment="Center"/>
+                            <TextBlock Text="添加文件" Margin="7,0,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource BaseButton}" Click="AddFolder_Click" Margin="10,0,0,0">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE710;" FontFamily="{StaticResource IconFont}" FontSize="12"
+                                       VerticalAlignment="Center" Opacity="0.75"/>
+                            <TextBlock Text="添加文件夹" Margin="7,0,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
                 </StackPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                     <Button x:Name="GridModeButton" Style="{StaticResource IconButton}" ToolTip="网格视图" Click="GridMode_Click" Margin="0,0,4,0">
-                        <TextBlock Text="▦" FontSize="15" Foreground="{DynamicResource TextPrimaryBrush}"/>
+                        <TextBlock Text="网格" FontSize="11" Foreground="{DynamicResource TextPrimaryBrush}"/>
                     </Button>
                     <Button x:Name="ListModeButton" Style="{StaticResource IconButton}" ToolTip="列表视图" Click="ListMode_Click">
-                        <TextBlock Text="☰" FontSize="15" Foreground="{DynamicResource TextPrimaryBrush}"/>
+                        <TextBlock Text="列表" FontSize="11" Foreground="{DynamicResource TextPrimaryBrush}"/>
                     </Button>
                 </StackPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="0,0,16,0">

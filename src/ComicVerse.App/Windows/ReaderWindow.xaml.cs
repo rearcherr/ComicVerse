@@ -69,7 +69,7 @@ public partial class ReaderWindow : Window
 
         _rtl = App.Settings.MangaRightToLeft;
         UpdateRtlGlyph();
-        ReaderThemeGlyph.Text = ThemeService.Current == "dark" ? "☾" : "☀";
+        ReaderThemeGlyph.Text = ThemeService.Current == "dark" ? "\uE708" : "\uE706";
     }
 
     // 自检钩子（仅在 --smoke 模式下使用）
@@ -626,7 +626,7 @@ public partial class ReaderWindow : Window
     private void UpdateRtlGlyph()
     {
         RtlGlyph.Opacity = _rtl ? 1.0 : 0.35;
-        RtlGlyph.Text = _rtl ? "⇋" : "⇄";
+        RtlGlyph.Text = _rtl ? "RTL" : "LTR";
     }
 
     #endregion
@@ -1183,7 +1183,7 @@ public partial class ReaderWindow : Window
     {
         ThemeService.Toggle();
         App.Settings.Theme = ThemeService.Current;
-        ReaderThemeGlyph.Text = ThemeService.Current == "dark" ? "☾" : "☀";
+        ReaderThemeGlyph.Text = ThemeService.Current == "dark" ? "\uE708" : "\uE706";
         ApplyThemeToNovelSettings();
     }
 

@@ -288,6 +288,21 @@ public static class SmokeTest
 
         await Task.Delay(400);
         Capture(main, Path.Combine(outDir, "shelf.png"));
+        bool lightHeaderOk = true;
+        try
+        {
+            // 浅色主题下的书架：顶栏文字必须在浅色底上依然可读（此前是白字白底）
+            ThemeService.Toggle();
+            await Task.Delay(500);
+            Capture(main, Path.Combine(outDir, "shelf-light.png"));
+            lightHeaderOk = HeaderHasContrast(main);
+            ThemeService.Toggle();
+            await Task.Delay(300);
+        }
+        catch
+        {
+            lightHeaderOk = false;
+        }
         main.Close();
 
         string summary =
@@ -302,6 +317,7 @@ public static class SmokeTest
             $"小说: 翻页进度={novelProgressOk} 浅色背景={novelLightThemeOk} 恢复进度={novelRestoreOk}\n" +
             $"关闭阅读器耗时: {closeSeconds:F1}s\n" +
             $"界面卡顿: 打开漫画最大停顿 {openStallMs:F0}ms | 整个阅读过程最大停顿 {sessionStallMs:F0}ms\n" +
+            $"浅色主题顶栏对比度: {lightHeaderOk}\n" +
             (longPdfOpenSeconds >= 0 ? $"200 页 PDF: 打开耗时 {longPdfOpenSeconds:F1}s，最大停顿 {longPdfStallMs:F0}ms\n" : "") +
             (tallPdf.Length > 0 ? $"超长 PDF 条漫切换: {tallWebtoonOk}（耗时 {tallWebtoonSeconds:F1}s，页数 {readerWebtoonPages}）\n" : "") +
             (webtoonOk ? "条漫诊断: " + readerWebtoonStats + "\n" : "") +
@@ -316,6 +332,7 @@ public static class SmokeTest
         // 界面停顿阈值（毫秒）：打开与阅读过程中都不应出现可感知的长时间卡死
         bool stallOk = openStallMs >= 0 && openStallMs < 1500 && sessionStallMs < 2500 && (longPdfStallMs < 0 || longPdfStallMs < 1500);
         return comic is not null && novel is not null && comicReaderOk && pagingOk && farJumpOk &&
+               lightHeaderOk &&
                webtoonOk && webtoonScrollOk && webtoonFarJumpOk &&
                sliderDragOk &&
                doubleOk && novelReaderOk && pdfReaderOk && tallOk && closeOk && stallOk && defaultModeOk && defaultOpensWebtoon &&
@@ -334,6 +351,31 @@ public static class SmokeTest
         enc.Frames.Add(BitmapFrame.Create(rtb));
         using var fs = File.Create(path);
         enc.Save(fs);
+    }
+
+    /// <summary>顶栏是否有足够对比：同一区域同时存在明显亮暗像素（防止白字白底这类问题）。</summary>
+    private static bool HeaderHasContrast(Window window)
+    {
+        window.UpdateLayout();
+        int w = Math.Max(1, (int)window.ActualWidth);
+        int h = Math.Max(1, (int)window.ActualHeight);
+        var rtb = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
+        rtb.Render(window);
+        int stride = w * 4;
+        var buf = new byte[stride * h];
+        rtb.CopyPixels(buf, stride, 0);
+        int min = 255, max = 0;
+        for (int y = 6; y < Math.Min(56, h); y += 2)
+        {
+            for (int x = 6; x < w - 6; x += 3)
+            {
+                int i = y * stride + x * 4;
+                int lum = (buf[i] * 29 + buf[i + 1] * 150 + buf[i + 2] * 77) >> 8;
+                if (lum < min) min = lum;
+                if (lum > max) max = lum;
+            }
+        }
+        return max - min > 60;
     }
 
     /// <summary>内容区“有内容”的比例：与背景色差异明显的像素占比，用于判断是否真的空白。</summary>

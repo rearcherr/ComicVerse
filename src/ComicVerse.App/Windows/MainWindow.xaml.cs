@@ -230,9 +230,10 @@ public partial class MainWindow : Window
         App.Settings.Theme = ThemeService.Current;
         ThemeButton.Content = new TextBlock
         {
-            Text = ThemeService.Current == "dark" ? "☾" : "☀",
-            FontSize = 16,
-            Foreground = System.Windows.Media.Brushes.White
+            Text = ThemeService.Current == "dark" ? "\uE708" : "\uE706",
+            FontSize = 15,
+            FontFamily = (System.Windows.Media.FontFamily)FindResource("IconFont"),
+            Foreground = (System.Windows.Media.Brush)FindResource("TextPrimaryBrush")
         };
     }
 
