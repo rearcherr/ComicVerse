@@ -279,9 +279,13 @@ public partial class WebtoonViewer : UserControl
             var img = new Image
             {
                 Width = RootCanvas.Width,
-                Height = _dims[i].Height * (RootCanvas.Width / Math.Max(1, _dims[i].Width)),
+                // 用「下一页顶部 - 本页顶部」精确定高，并额外多铺 1px：
+                // 相邻页交界处的高度是小数，抗锯齿会在缝里透出背景，看起来就是一条细白线
+                Height = Math.Max(1, (i + 1 < _tops.Count ? _tops[i + 1] : _total) - _tops[i]) + 1,
                 Stretch = System.Windows.Media.Stretch.Fill
             };
+            System.Windows.Media.RenderOptions.SetEdgeMode(img, System.Windows.Media.EdgeMode.Aliased);
+            System.Windows.Media.RenderOptions.SetBitmapScalingMode(img, System.Windows.Media.BitmapScalingMode.HighQuality);
             Canvas.SetTop(img, _tops[i]);
             RootCanvas.Children.Add(img);
             _rendered[i] = img;

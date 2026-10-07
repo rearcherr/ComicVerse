@@ -9,10 +9,12 @@
                       ScrollChanged="OnScrollChanged"
                       PreviewMouseWheel="OnPreviewMouseWheel"
                       Background="{DynamicResource ReaderBgBrush}">
-            <Canvas x:Name="RootCanvas" Background="Transparent"/>
+            <!-- UseLayoutRounding：让每页的位置与高度按设备像素取整，避免相邻页之间出现亚像素接缝（细白线） -->
+            <Canvas x:Name="RootCanvas" Background="Transparent" UseLayoutRounding="True" SnapsToDevicePixels="True"/>
         </ScrollViewer>
         <StackPanel x:Name="LoadingOverlay" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed">
-            <TextBlock Text="◌" FontSize="34" Foreground="{DynamicResource TextFaintBrush}" HorizontalAlignment="Center"/>
+            <TextBlock Text="&#xE895;" FontFamily="{StaticResource IconFont}" FontSize="28"
+                       Foreground="{DynamicResource TextFaintBrush}" HorizontalAlignment="Center"/>
             <TextBlock x:Name="LoadingText" Text="正在排版条漫…" FontSize="12" Foreground="{DynamicResource TextFaintBrush}"
                        HorizontalAlignment="Center" Margin="0,10,0,0"/>
         </StackPanel>

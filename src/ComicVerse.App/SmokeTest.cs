@@ -36,6 +36,20 @@ public static class SmokeTest
         var comic = App.Library.GetBooks(filter: "comic").OrderByDescending(b => b.PageCount).FirstOrDefault();
         var novel = App.Library.GetBooks(filter: "novel").FirstOrDefault();
 
+        // 导入新文件后书架必须立即出现（此前列表视图要重启才显示）
+        bool shelfRefreshOk = false;
+        try
+        {
+            int beforeCount = main.ShelfCount;
+            string freshCbz = CreateLongComic(outDir, 3, "fresh-import.cbz");
+            await main.TestImportAsync(new[] { freshCbz });
+            shelfRefreshOk = main.ShelfContains("fresh-import") && main.ShelfCount > beforeCount;
+        }
+        catch
+        {
+            shelfRefreshOk = false;
+        }
+
         bool comicReaderOk = false;
         bool webtoonOk = false;
         bool doubleOk = false;
@@ -45,6 +59,7 @@ public static class SmokeTest
         bool webtoonScrollOk = false;
         bool farJumpOk = false;
         bool webtoonFarJumpOk = false;
+        int webtoonSeamRows = -1;
         bool sliderDragOk = false;
         int sliderDragBlank = -1;
         int sliderDragPage = -1;
@@ -127,6 +142,7 @@ public static class SmokeTest
                 await Task.Delay(1500);
                 webtoonFarJumpOk = reader.IsWebtoonReady && reader.WebtoonRenderedCount > 0
                     && reader.WebtoonRenderedLoadedCount > 0 && reader.CurrentPageNumber == last;
+                webtoonSeamRows = BackgroundRowCount(reader); // 相邻页之间不应漏出背景（细白线）
                 Capture(reader, Path.Combine(outDir, "reader-webtoon-far-jump.png"));
                 // 大幅拖动进度条：松手后视口内的每一屏都必须真正加载出图片（不能空白）
                 reader.TestSliderDrag(0.05, 0.92);
@@ -318,6 +334,8 @@ public static class SmokeTest
             $"关闭阅读器耗时: {closeSeconds:F1}s\n" +
             $"界面卡顿: 打开漫画最大停顿 {openStallMs:F0}ms | 整个阅读过程最大停顿 {sessionStallMs:F0}ms\n" +
             $"浅色主题顶栏对比度: {lightHeaderOk}\n" +
+            $"导入后书架立即刷新: {shelfRefreshOk}\n" +
+            $"条漫页间接缝检测（背景色行数）: {webtoonSeamRows}\n" +
             (longPdfOpenSeconds >= 0 ? $"200 页 PDF: 打开耗时 {longPdfOpenSeconds:F1}s，最大停顿 {longPdfStallMs:F0}ms\n" : "") +
             (tallPdf.Length > 0 ? $"超长 PDF 条漫切换: {tallWebtoonOk}（耗时 {tallWebtoonSeconds:F1}s，页数 {readerWebtoonPages}）\n" : "") +
             (webtoonOk ? "条漫诊断: " + readerWebtoonStats + "\n" : "") +
@@ -332,7 +350,7 @@ public static class SmokeTest
         // 界面停顿阈值（毫秒）：打开与阅读过程中都不应出现可感知的长时间卡死
         bool stallOk = openStallMs >= 0 && openStallMs < 1500 && sessionStallMs < 2500 && (longPdfStallMs < 0 || longPdfStallMs < 1500);
         return comic is not null && novel is not null && comicReaderOk && pagingOk && farJumpOk &&
-               lightHeaderOk &&
+               lightHeaderOk && shelfRefreshOk && webtoonSeamRows == 0 &&
                webtoonOk && webtoonScrollOk && webtoonFarJumpOk &&
                sliderDragOk &&
                doubleOk && novelReaderOk && pdfReaderOk && tallOk && closeOk && stallOk && defaultModeOk && defaultOpensWebtoon &&
@@ -378,6 +396,29 @@ public static class SmokeTest
         return max - min > 60;
     }
 
+    /// <summary>条漫内容区里“漏出背景色”的行数：相邻页之间若有细白线/缝隙，就会出现这种行。</summary>
+    private static int BackgroundRowCount(Window window)
+    {
+        window.UpdateLayout();
+        int w = Math.Max(1, (int)window.ActualWidth);
+        int h = Math.Max(1, (int)window.ActualHeight);
+        var rtb = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
+        rtb.Render(window);
+        int stride = w * 4;
+        var buf = new byte[stride * h];
+        rtb.CopyPixels(buf, stride, 0);
+        var bg = (window.TryFindResource("ReaderBgBrush") as SolidColorBrush)?.Color ?? Colors.Black;
+        int x = w / 2;
+        int bad = 0;
+        for (int y = (int)(h * 0.12); y < (int)(h * 0.9); y++)
+        {
+            int i = y * stride + x * 4;
+            int diff = Math.Abs(buf[i] - bg.B) + Math.Abs(buf[i + 1] - bg.G) + Math.Abs(buf[i + 2] - bg.R);
+            if (diff < 24) bad++;
+        }
+        return bad;
+    }
+
     /// <summary>内容区“有内容”的比例：与背景色差异明显的像素占比，用于判断是否真的空白。</summary>
     private static double ContentInkRatio(Window window)
     {
@@ -408,7 +449,7 @@ public static class SmokeTest
         return total == 0 ? 0 : (double)ink / total;
     }
 
-    private static string CreateLongComic(string outDir, int pageCount = 120)
+    private static string CreateLongComic(string outDir, int pageCount = 120, string fileName = "long-comic.cbz")
     {
         string dir = Path.Combine(outDir, "long-gen");
         Directory.CreateDirectory(dir);
@@ -432,7 +473,7 @@ public static class SmokeTest
             enc.Save(fs);
             pages.Add(p);
         }
-        string cbz = Path.Combine(outDir, "long-comic.cbz");
+        string cbz = Path.Combine(outDir, fileName);
         using var cz = File.Create(cbz);
         using var zip = new ZipArchive(cz, ZipArchiveMode.Create);
         for (int i = 0; i < pages.Count; i++)

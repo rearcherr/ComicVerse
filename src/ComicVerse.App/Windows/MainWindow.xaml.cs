@@ -1,4 +1,5 @@
 using System.IO;
+using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -14,7 +15,8 @@ public partial class MainWindow : Window
     private const double CardWidth = 166;
     private const double CardGap = 16;
 
-    private readonly List<Book> _books = new();
+    // 用可观察集合：列表视图直接绑定它，导入新书后无需重启即可刷新
+    private readonly ObservableCollection<Book> _books = new();
     private string _filter = "all";
     private string _sort = "recent";
     private bool _gridMode = true;
@@ -39,6 +41,13 @@ public partial class MainWindow : Window
 
     public void Refresh() => RefreshBooks();
 
+    // 自检钩子（仅 --smoke 使用）：走真实导入流程，验证书架是否立即刷新
+    internal Task TestImportAsync(string[] paths) => ImportAsync(paths);
+    internal bool ShelfContains(string keyword) =>
+        _books.Any(b => b.Title.Contains(keyword, StringComparison.OrdinalIgnoreCase)
+                        || b.FilePath.Contains(keyword, StringComparison.OrdinalIgnoreCase));
+    internal int ShelfCount => _books.Count;
+
     private void Window_Loaded(object sender, RoutedEventArgs e)
     {
         if (App.Settings.LibraryView == "list") ApplyListMode();
@@ -55,9 +64,10 @@ public partial class MainWindow : Window
     {
         if (!IsLoaded) return;
         _books.Clear();
-        _books.AddRange(App.Library.GetBooks(SearchBox?.Text.Trim() ?? "", _filter, _sort));
+        foreach (var b in App.Library.GetBooks(SearchBox?.Text.Trim() ?? "", _filter, _sort))
+            _books.Add(b);
         RebuildRows();
-        ListView.ItemsSource = _books;
+        if (ListView.ItemsSource is null) ListView.ItemsSource = _books;
         StatusText.Text = $"共 {_books.Count} 本书 · 图片缓存 {App.SharedCache.EstimatedBytes / (1024 * 1024)} MB";
         bool empty = _books.Count == 0;
         EmptyState.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
