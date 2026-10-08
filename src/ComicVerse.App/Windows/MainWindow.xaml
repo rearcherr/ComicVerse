@@ -296,8 +296,12 @@
 
         <Border Grid.Row="3" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
                 BorderThickness="0,1,0,0" Padding="20,7">
-            <TextBlock x:Name="StatusText" Text="共 0 本书" FontSize="12"
-                       Foreground="{DynamicResource TextSecondaryBrush}"/>
+            <DockPanel>
+                <TextBlock x:Name="VersionText" DockPanel.Dock="Right" Text="v0.0.0" FontSize="12"
+                           Foreground="{DynamicResource TextSecondaryBrush}"/>
+                <TextBlock x:Name="StatusText" Text="共 0 本书" FontSize="12"
+                           Foreground="{DynamicResource TextSecondaryBrush}"/>
+            </DockPanel>
         </Border>
     </Grid>
 </Window>

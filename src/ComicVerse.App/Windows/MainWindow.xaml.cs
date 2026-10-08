@@ -25,6 +25,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        VersionText.Text = "v" + App.AppVersion;
         AllowDrop = true;
         DragEnter += OnDragEnter;
         DragOver += OnDragOver;

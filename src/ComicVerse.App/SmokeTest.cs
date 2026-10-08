@@ -81,6 +81,8 @@ public static class SmokeTest
         bool novelScrollChapterOk = false;
         bool novelLightThemeOk = false;
         bool novelRestoreOk = false;
+        bool novelArrowOk = false;
+        string novelArrowDetail = "";
         double closeSeconds = -1;
         bool tallWebtoonOk = false;
         double tallWebtoonSeconds = -1;
@@ -272,6 +274,25 @@ public static class SmokeTest
             await Task.Delay(400);
             int novelChapterBefore = reader.NovelChapterIndex;
             novelProgressOk = novelChapterBefore >= 1;
+            // 方向键在小说里同样不应受日漫 RTL 影响：← 恒为上一章/上一页，→ 恒为下一章/下一页
+            App.Settings.MangaRightToLeft = true;
+            reader.TestSetRtl(true);
+            reader.TestNovelGoToChapter(0);
+            await Task.Delay(700);
+            int novelArrowBase = reader.NovelChapterIndex * 1000 + reader.NovelPage;
+            reader.TestPressArrowKey(isLeftKey: false); // →
+            await Task.Delay(500);
+            int novelArrowRight = reader.NovelChapterIndex * 1000 + reader.NovelPage;
+            reader.TestPressArrowKey(isLeftKey: true);  // ←
+            await Task.Delay(500);
+            int novelArrowLeft = reader.NovelChapterIndex * 1000 + reader.NovelPage;
+            novelArrowOk = novelArrowRight > novelArrowBase && novelArrowLeft < novelArrowRight;
+            novelArrowDetail =
+                $"RTL=1 第 {novelArrowBase / 1000 + 1} 章(页位 {novelArrowBase % 1000}) → 右键到第 {novelArrowRight / 1000 + 1} 章(页位 {novelArrowRight % 1000}) → 左键回第 {novelArrowLeft / 1000 + 1} 章(页位 {novelArrowLeft % 1000})";
+            App.Settings.MangaRightToLeft = false;
+            reader.TestSetRtl(false);
+            reader.TestNovelGoToChapter(novelChapterBefore);
+            await Task.Delay(600);
             reader.TestToggleTheme();
             await Task.Delay(900);
             novelLightThemeOk = reader.NovelBackgroundHex.Length > 0 && !reader.NovelBackgroundHex.Contains("1A1A2E");
@@ -379,6 +400,7 @@ public static class SmokeTest
             $"按书记忆: 翻页模式={modePersisted} 缩放150%={zoomPersisted} 比例数字={zoomTextRestored}\n" +
             $"缩放同步: 比例数字={zoomTextSyncOk}\n" +
             $"小说: 翻页进度={novelProgressOk} 滚动接章={novelScrollChapterOk} 浅色背景={novelLightThemeOk} 恢复进度={novelRestoreOk}\n" +
+            $"小说方向键（← 上一章 / → 下一章，RTL=1）: {novelArrowOk} — {novelArrowDetail}\n" +
             $"关闭阅读器耗时: {closeSeconds:F1}s\n" +
             $"界面卡顿: 打开漫画最大停顿 {openStallMs:F0}ms | 整个阅读过程最大停顿 {sessionStallMs:F0}ms\n" +
             $"浅色主题顶栏对比度: {lightHeaderOk}\n" +
@@ -407,7 +429,7 @@ public static class SmokeTest
                sliderDragOk &&
                doubleOk && novelReaderOk && pdfReaderOk && tallOk && closeOk && stallOk && defaultModeOk && defaultOpensWebtoon &&
                modePersisted && zoomPersisted && zoomTextSyncOk && zoomTextRestored &&
-               novelProgressOk && novelScrollChapterOk && novelLightThemeOk && novelRestoreOk ? 0 : 1;
+               novelProgressOk && novelScrollChapterOk && novelLightThemeOk && novelRestoreOk && novelArrowOk ? 0 : 1;
     }
 
     private static void Capture(Window window, string path)

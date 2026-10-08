@@ -39,6 +39,8 @@ public partial class ReaderWindow : Window
     private double _webtoonFraction;
 
     private int _novelChapter;
+    /// <summary>待定位到末页的章节号：回退到上一章时用（-1 表示无）。</summary>
+    private int _novelPendingLastPage = -1;
     private int _novelPage;
     private double _novelScrollFraction;
     private string _novelSubMode = "paged";
@@ -449,12 +451,14 @@ public partial class ReaderWindow : Window
 
     /// <summary>
     /// 左右方向键的翻页方向。
-    /// 条漫是纵向连续滚动，不存在左右翻页方向，因此始终「← 上一页（向上）/ → 下一页（向下）」，
-    /// 不受日漫 RTL 设置影响；翻页与双页模式仍遵循 RTL（开启后右→左）。
+    /// 只有翻页/双页是「左右翻页」的横向阅读，才受日漫 RTL 设置影响（开启后 ← 为下一页）；
+    /// 条漫是纵向连续滚动、小说是文字流，都没有左右翻页方向，因此恒为
+    /// 「← 上一页/上一章、→ 下一页/下一章」，与 RTL 设置无关。
     /// </summary>
     private void NavigateHorizontal(bool isLeftKey)
     {
-        bool forward = _mode == "webtoon" ? !isLeftKey : isLeftKey == _rtl;
+        bool rtlApplies = _mode is "paged" or "double";
+        bool forward = rtlApplies ? isLeftKey == _rtl : !isLeftKey;
         if (forward) Next();
         else Prev();
     }
@@ -696,6 +700,11 @@ public partial class ReaderWindow : Window
         {
             int pages = ComputeChapterPages();
             _chapterPages[_novelChapter] = pages;
+            if (_novelPendingLastPage == _novelChapter)
+            {
+                _novelPendingLastPage = -1;
+                _novelPage = Math.Max(0, pages - 1);   // 回退到上一章时停在末页
+            }
             NovelPaged.GoToPage(Math.Clamp(_novelPage, 0, pages - 1));
             if (_novelSubMode == "scroll")
             {
@@ -784,8 +793,17 @@ public partial class ReaderWindow : Window
             UpdateNovelInfo();
             return;
         }
-        _novelPage = Math.Max(0, _novelPage - 1);
-        NovelPaged.GoToPage(_novelPage);
+        if (_novelPage > 0)
+        {
+            _novelPage--;
+            NovelPaged.GoToPage(_novelPage);
+        }
+        else if (_novelChapter > 0)
+        {
+            // 章首再往前 → 回到上一章末尾（与 NovelNext 的章末接下一章对称）
+            _novelPendingLastPage = _novelChapter - 1;
+            LoadNovelChapter(_novelChapter - 1, resetPosition: false);
+        }
         UpdateNovelInfo();
         ScheduleSave();
     }

@@ -1,4 +1,5 @@
 using System.IO;
+using System.Reflection;
 using System.Text;
 using System.Windows;
 using ComicVerse.Core;
@@ -16,6 +17,12 @@ public partial class App : Application
 
     public static string AppDataDir { get; private set; } = "";
 
+    /// <summary>应用版本号（来自程序集信息，CI 发布时与 git 标签一致），用于界面显示与日志排查。</summary>
+    public static string AppVersion { get; } =
+        Assembly.GetExecutingAssembly()
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+        ?? "0.0.0";
+
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
@@ -27,6 +34,7 @@ public partial class App : Application
             : Path.GetFullPath(overrideDir);
         Directory.CreateDirectory(AppDataDir);
         Log.Configure(Path.Combine(AppDataDir, "logs"));
+        Log.Info($"ComicVerse v{AppVersion} 启动 | exe={Environment.ProcessPath} | 数据目录={AppDataDir}");
         PdfNative.EnsureExtracted(Path.Combine(AppDataDir, "native"));
 
         Library = new LibraryService(Path.Combine(AppDataDir, "library.db"));
