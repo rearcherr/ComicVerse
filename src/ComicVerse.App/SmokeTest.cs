@@ -61,6 +61,8 @@ public static class SmokeTest
         bool webtoonFarJumpOk = false;
         bool webtoonDragOk = false;
         int webtoonSeamRows = -1;
+        bool webtoonArrowOk = false;
+        string webtoonArrowDetail = "";
         bool sliderDragOk = false;
         int sliderDragBlank = -1;
         int sliderDragPage = -1;
@@ -145,6 +147,28 @@ public static class SmokeTest
                 webtoonFarJumpOk = reader.IsWebtoonReady && reader.WebtoonRenderedCount > 0
                     && reader.WebtoonRenderedLoadedCount > 0 && reader.CurrentPageNumber == last;
                 webtoonSeamRows = BackgroundRowCount(reader); // 相邻页之间不应漏出背景（细白线）
+                // 左右方向键：条漫是纵向滚动，始终 ← 上一页（上）/ → 下一页（下），不受日漫 RTL 设置影响
+                int arrowMid = Math.Max(0, last / 2);
+                App.Settings.MangaRightToLeft = true; // 复现用户环境（其库中 manga_rtl=1）
+                reader.TestSetRtl(true);
+                reader.TestWebtoonJumpTo(arrowMid);
+                await Task.Delay(400);
+                int arrowStartPage = reader.WebtoonCurrentPage;
+                double arrowStartOffset = reader.WebtoonScrollOffset;
+                reader.TestPressArrowKey(isLeftKey: false); // →
+                await Task.Delay(450);
+                int arrowRightPage = reader.WebtoonCurrentPage;
+                double arrowRightOffset = reader.WebtoonScrollOffset;
+                reader.TestPressArrowKey(isLeftKey: true); // ←
+                await Task.Delay(450);
+                int arrowLeftPage = reader.WebtoonCurrentPage;
+                double arrowLeftOffset = reader.WebtoonScrollOffset;
+                webtoonArrowOk = arrowRightPage > arrowStartPage && arrowRightOffset > arrowStartOffset
+                                 && arrowLeftPage < arrowRightPage && arrowLeftOffset < arrowRightOffset;
+                webtoonArrowDetail =
+                    $"RTL=1 第 {arrowStartPage + 1} 页(偏移 {arrowStartOffset:F0}) → 右键到第 {arrowRightPage + 1} 页({arrowRightOffset:F0}) → 左键回第 {arrowLeftPage + 1} 页({arrowLeftOffset:F0})";
+                App.Settings.MangaRightToLeft = false;
+                reader.TestSetRtl(false);
                 // 鼠标左键拖拽滑动：向下拖 180px，滚动偏移应同步上移约 180px
                 double beforeDrag = reader.WebtoonScrollOffset;
                 reader.TestWebtoonDragDown(180);
@@ -361,6 +385,7 @@ public static class SmokeTest
             $"导入后书架立即刷新: {shelfRefreshOk}\n" +
             $"条漫页间接缝检测（背景色行数）: {webtoonSeamRows}\n" +
             $"条漫鼠标拖拽滑动: {webtoonDragOk}\n" +
+            $"条漫方向键（← 上一页 / → 下一页）: {webtoonArrowOk} — {webtoonArrowDetail}\n" +
             (longPdfOpenSeconds >= 0 ? $"200 页 PDF: 打开耗时 {longPdfOpenSeconds:F1}s，最大停顿 {longPdfStallMs:F0}ms\n" : "") +
             (tallPdf.Length > 0 ? $"超长 PDF 条漫切换: {tallWebtoonOk}（耗时 {tallWebtoonSeconds:F1}s，页数 {readerWebtoonPages}）\n" : "") +
             (webtoonOk ? "条漫诊断: " + readerWebtoonStats + "\n" : "") +
@@ -377,6 +402,7 @@ public static class SmokeTest
         return comic is not null && novel is not null && comicReaderOk && pagingOk && farJumpOk &&
                lightHeaderOk && shelfRefreshOk && webtoonSeamRows == 0 &&
                webtoonDragOk &&
+               webtoonArrowOk &&
                webtoonOk && webtoonScrollOk && webtoonFarJumpOk &&
                sliderDragOk &&
                doubleOk && novelReaderOk && pdfReaderOk && tallOk && closeOk && stallOk && defaultModeOk && defaultOpensWebtoon &&

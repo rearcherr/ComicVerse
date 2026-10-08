@@ -87,6 +87,22 @@ public partial class ReaderWindow : Window
     internal void TestJumpToPage(int page) => LoadPageAsync(page);
     internal void TestWebtoonJumpTo(int page) => WebtoonView.ScrollToPage(page);
     internal void TestWebtoonDragDown(double dy) => WebtoonView.TestDragDown(dy);
+    internal void TestSetRtl(bool rtl) => _rtl = rtl;
+    internal int WebtoonCurrentPage => WebtoonView.CurrentPage;
+
+    /// <summary>注入真实的左右方向键事件，走与用户按键完全相同的处理链路。</summary>
+    internal void TestPressArrowKey(bool isLeftKey)
+    {
+        var source = PresentationSource.FromVisual(this);
+        if (source is null)
+        {
+            NavigateHorizontal(isLeftKey);
+            return;
+        }
+        RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, source, Environment.TickCount,
+            isLeftKey ? Key.Left : Key.Right) { RoutedEvent = Keyboard.PreviewKeyDownEvent });
+    }
+
     internal int WebtoonRenderedCount => WebtoonView.RenderedCount;
     internal int WebtoonRenderedLoadedCount => WebtoonView.RenderedWithSourceCount;
     internal int WebtoonBlankStripCount => WebtoonView.RenderedWithoutSourceCount;
@@ -429,6 +445,18 @@ public partial class ReaderWindow : Window
                 LoadPageAsync(_page + 1);
                 break;
         }
+    }
+
+    /// <summary>
+    /// 左右方向键的翻页方向。
+    /// 条漫是纵向连续滚动，不存在左右翻页方向，因此始终「← 上一页（向上）/ → 下一页（向下）」，
+    /// 不受日漫 RTL 设置影响；翻页与双页模式仍遵循 RTL（开启后右→左）。
+    /// </summary>
+    private void NavigateHorizontal(bool isLeftKey)
+    {
+        bool forward = _mode == "webtoon" ? !isLeftKey : isLeftKey == _rtl;
+        if (forward) Next();
+        else Prev();
     }
 
     private void UpdateComicInfo()
@@ -1323,11 +1351,11 @@ public partial class ReaderWindow : Window
                 e.Handled = true;
                 break;
             case Key.Left:
-                if (_rtl) Next(); else Prev();
+                NavigateHorizontal(isLeftKey: true);
                 e.Handled = true;
                 break;
             case Key.Right:
-                if (_rtl) Prev(); else Next();
+                NavigateHorizontal(isLeftKey: false);
                 e.Handled = true;
                 break;
             case Key.Home:

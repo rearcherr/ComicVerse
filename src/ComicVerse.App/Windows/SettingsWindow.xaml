@@ -90,7 +90,7 @@
                 <TextBlock Text="日漫翻页方向" Style="{StaticResource BodyText}" VerticalAlignment="Center"/>
                 <StackPanel Grid.Column="1">
                     <ToggleButton x:Name="RtlToggle" Style="{StaticResource ToggleSwitch}" HorizontalAlignment="Left" Checked="Rtl_Changed" Unchecked="Rtl_Changed"/>
-                    <TextBlock Text="开启后按右→左阅读（日漫习惯）" Style="{StaticResource CaptionText}" Margin="0,6,0,0"/>
+                    <TextBlock Text="开启后按右→左阅读（日漫习惯，仅翻页/双页；条漫为纵向滚动，不受影响）" Style="{StaticResource CaptionText}" Margin="0,6,0,0" TextWrapping="Wrap"/>
                 </StackPanel>
             </Grid>
 
