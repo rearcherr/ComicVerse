@@ -76,6 +76,7 @@ public static class Program
             Run("指纹稳定", () => TestFingerprint(work, samples.Cbz));
             Run("封面生成", () => TestCoverGeneration(work));
             Run("漫画加载器缓存", () => TestComicLoader(samples.Cbz));
+            Run("跨书缓存隔离", () => TestCacheIsolation(work));
             Run("书库与进度", () => TestLibrary(samples));
             Run("书库并发访问", () => TestLibraryConcurrency(samples));
             Run("取尺寸只读头部", () => TestSizeProbe(work));
@@ -424,6 +425,55 @@ public static class Program
             Thread.Sleep(50);
         loader.GetPageAsync(3).GetAwaiter().GetResult();
         Assert(loader.GetCached(3) is not null, "第 4 页未入缓存");
+    }
+
+    /// <summary>共享缓存必须按书隔离：换一本书后同一页号不能命中上一本书的画面。</summary>
+    private static void TestCacheIsolation(string work)
+    {
+        string dirA = Path.Combine(work, "cache-a");
+        string dirB = Path.Combine(work, "cache-b");
+        Directory.CreateDirectory(dirA);
+        Directory.CreateDirectory(dirB);
+
+        var pagesA = new List<string>();
+        for (int i = 1; i <= 3; i++)
+        {
+            string p = Path.Combine(dirA, $"p{i}.png");
+            TestData.MakePng(p, 600, 1100, Color.FromRgb(80, 120, 200), "A" + i);
+            pagesA.Add(p);
+        }
+        var pagesB = new List<string>();
+        for (int i = 1; i <= 3; i++)
+        {
+            string p = Path.Combine(dirB, $"p{i}.png");
+            TestData.MakePng(p, 300, 800, Color.FromRgb(200, 90, 120), "B" + i);
+            pagesB.Add(p);
+        }
+
+        string cbzA = Path.Combine(work, "cache-a.cbz");
+        string cbzB = Path.Combine(work, "cache-b.cbz");
+        TestData.MakeCbz(cbzA, pagesA.Select((p, i) => ($"p{i + 1:00}.png", p)));
+        TestData.MakeCbz(cbzB, pagesB.Select((p, i) => ($"p{i + 1:00}.png", p)));
+
+        var cache = new ImageCacheService { MaxBytes = 64L * 1024 * 1024 };
+
+        using var srcA = new ZipComicSource(cbzA);
+        using var loaderA = new ComicImageLoader(srcA, cache, prefetchCount: 0);
+        var a0 = loaderA.GetPageAsync(0).GetAwaiter().GetResult();
+        var a1 = loaderA.GetPageAsync(1).GetAwaiter().GetResult();
+        Assert(a0 is { PixelWidth: 600, PixelHeight: 1100 }, "A 书第 1 页尺寸异常: " + a0?.PixelWidth + "x" + a0?.PixelHeight);
+        Assert(a1 is not null, "A 书第 2 页加载失败");
+
+        using var srcB = new ZipComicSource(cbzB);
+        using var loaderB = new ComicImageLoader(srcB, cache, prefetchCount: 0);
+        var b0 = loaderB.GetPageAsync(0).GetAwaiter().GetResult();
+        Assert(b0 is { PixelWidth: 300, PixelHeight: 800 },
+            $"跨书串页：B 书第 1 页拿到了不是它自己的画面（{b0?.PixelWidth}x{b0?.PixelHeight}）");
+
+        // 回到 A 书仍应命中 A 书自己的缓存
+        var againA0 = loaderA.GetPageAsync(0).GetAwaiter().GetResult();
+        Assert(againA0 is { PixelWidth: 600 }, "A 书缓存被串或丢失");
+        Assert(loaderA.GetCached(0) is not null, "A 书第 1 页未命中缓存");
     }
 
     private static void TestLibrary(Samples samples)

@@ -1050,7 +1050,9 @@ public partial class ReaderWindow : Window
             if (sv2 is null) return;
             double after = sv2.VerticalOffset;
             bool noMove = Math.Abs(after - before) < 0.5;
-            Log.Info($"[novel] wheel down={down} moved={!noMove} offset={after:F0}/{sv2.ScrollableHeight:F0} chapter={_novelChapter + 1}/{_novel.Chapters.Count} subMode={_novelSubMode}");
+            // 滚轮诊断默认关闭：逐次滚轮都写盘会刷爆日志（需要排查时设 COMICVERSE_DEBUG=1）
+            if (Environment.GetEnvironmentVariable("COMICVERSE_DEBUG") == "1")
+                Log.Info($"[novel] wheel down={down} moved={!noMove} offset={after:F0}/{sv2.ScrollableHeight:F0} chapter={_novelChapter + 1}/{_novel.Chapters.Count} subMode={_novelSubMode}");
             if (down && noMove && after >= sv2.ScrollableHeight - 3) NovelScrollStep(1);
             else if (!down && noMove && after <= 3) NovelScrollStep(-1);
         });

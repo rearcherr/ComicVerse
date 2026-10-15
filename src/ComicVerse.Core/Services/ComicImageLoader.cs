@@ -17,6 +17,7 @@ public sealed class ComicImageLoader : IDisposable
     private readonly CancellationTokenSource _cts = new();
     private readonly object _lock = new();
     private readonly int _prefetchCount;
+    private readonly string _cacheKey;   // 每本书一个缓存命名空间，避免切换书籍时命中别的书的页
     private volatile bool _disposed;
 
     public int PageCount { get; }
@@ -28,10 +29,11 @@ public sealed class ComicImageLoader : IDisposable
         _cache = cache;
         PageCount = source.PageCount;
         SourcePath = source.SourcePath;
+        _cacheKey = source.SourcePath;
         _prefetchCount = Math.Clamp(prefetchCount, 0, 8);
     }
 
-    public BitmapSource? GetCached(int index) => _cache.Get(index);
+    public BitmapSource? GetCached(int index) => _cache.Get(_cacheKey, index);
 
     /// <summary>仅读取图片尺寸（头部解码，用于条漫/双页布局）。</summary>
     public (int Width, int Height)? GetPageSize(int index)
@@ -51,7 +53,7 @@ public sealed class ComicImageLoader : IDisposable
     public async Task<BitmapSource?> GetPageAsync(int index, CancellationToken ct = default)
     {
         if (_disposed || index < 0 || index >= PageCount) return null;
-        var cached = _cache.Get(index);
+        var cached = _cache.Get(_cacheKey, index);
         if (cached is not null) return cached;
 
         int staleRetries = 0;
@@ -115,7 +117,7 @@ public sealed class ComicImageLoader : IDisposable
         int end = Math.Min(PageCount - 1, center + _prefetchCount);
         for (int i = start; i <= end; i++)
         {
-            if (_cache.Contains(i)) continue;
+            if (_cache.Contains(_cacheKey, i)) continue;
             bool already;
             lock (_lock) already = _pending.ContainsKey(i);
             if (already) continue;
@@ -154,7 +156,7 @@ public sealed class ComicImageLoader : IDisposable
                 img = ImageHelper.DecodeFrozen(stream);
             }
             if (img is not null)
-                _cache.Put(index, img);
+                _cache.Put(_cacheKey, index, img);
             return img;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

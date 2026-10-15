@@ -9,8 +9,9 @@ namespace ComicVerse.Core.Services;
 public sealed class ImageCacheService
 {
     private readonly object _lock = new();
-    private readonly Dictionary<int, BitmapSource> _map = new();
-    private readonly LinkedList<int> _lru = new();
+    // 键带来源标识：共享缓存被多本书共用，只用页号做键会让新书命中上一本书的画面
+    private readonly Dictionary<(string Source, int Index), BitmapSource> _map = new();
+    private readonly LinkedList<(string Source, int Index)> _lru = new();
     private long _bytes;
     private long _maxBytes = 400L * 1024 * 1024;
 
@@ -32,33 +33,35 @@ public sealed class ImageCacheService
         get { lock (_lock) return _bytes; }
     }
 
-    public BitmapSource? Get(int index)
+    public BitmapSource? Get(string sourceKey, int index)
     {
+        var key = (sourceKey, index);
         lock (_lock)
         {
-            if (_map.TryGetValue(index, out var img))
+            if (_map.TryGetValue(key, out var img))
             {
-                _lru.Remove(index);
-                _lru.AddFirst(index);
+                _lru.Remove(key);
+                _lru.AddFirst(key);
                 return img;
             }
             return null;
         }
     }
 
-    public void Put(int index, BitmapSource image)
+    public void Put(string sourceKey, int index, BitmapSource image)
     {
         if (image.IsFrozen == false) image.Freeze();
+        var key = (sourceKey, index);
         lock (_lock)
         {
-            if (_map.TryGetValue(index, out var old))
+            if (_map.TryGetValue(key, out var old))
             {
                 _bytes -= Estimate(old);
-                _lru.Remove(index);
+                _lru.Remove(key);
             }
-            _map[index] = image;
+            _map[key] = image;
             _bytes += Estimate(image);
-            _lru.AddFirst(index);
+            _lru.AddFirst(key);
             EvictLocked();
         }
     }
@@ -73,16 +76,32 @@ public sealed class ImageCacheService
         }
     }
 
-    public bool Contains(int index)
+    /// <summary>只清掉某一本书的缓存（例如关闭阅读器时）。</summary>
+    public void Clear(string sourceKey)
     {
-        lock (_lock) return _map.ContainsKey(index);
+        lock (_lock)
+        {
+            foreach (var key in _map.Keys.Where(k => k.Source == sourceKey).ToList())
+            {
+                if (_map.Remove(key, out var img))
+                {
+                    _bytes -= Estimate(img);
+                    _lru.Remove(key);
+                }
+            }
+        }
+    }
+
+    public bool Contains(string sourceKey, int index)
+    {
+        lock (_lock) return _map.ContainsKey((sourceKey, index));
     }
 
     private void EvictLocked()
     {
         while (_bytes > _maxBytes && _lru.Count > 1)
         {
-            int last = _lru.Last!.Value;
+            var last = _lru.Last!.Value;
             _lru.RemoveLast();
             if (_map.Remove(last, out var img))
                 _bytes -= Estimate(img);
