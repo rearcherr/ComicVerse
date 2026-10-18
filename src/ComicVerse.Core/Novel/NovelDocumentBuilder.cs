@@ -20,16 +20,21 @@ public sealed class NovelDocumentBuilder
 
     public FlowDocument Build(NovelChapter chapter, NovelViewSettings s)
     {
+        // FontFamily / ColorConverter.ConvertFromString 都是静态转换器：
+        // 用户手输了非法颜色（设置页允许输入十六进制色）或系统缺字体时会抛异常，
+        // 结果是"排版设置坏了 → 整本书打不开"。这里全部兜底，让排版退化而不是崩。
+        double fontSize = s.FontSize > 0 ? s.FontSize : 18;
+        double lineHeight = fontSize * (s.LineSpacing > 0 ? s.LineSpacing : 1.7);
         var doc = new FlowDocument
         {
-            FontFamily = new FontFamily(s.FontFamily),
-            FontSize = s.FontSize,
-            Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(s.TextColor)),
-            Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(s.Background)),
+            FontFamily = SafeFont(s.FontFamily),
+            FontSize = fontSize,
+            Foreground = new SolidColorBrush(SafeColor(s.TextColor, Color.FromRgb(0xE8, 0xE8, 0xF4))),
+            Background = new SolidColorBrush(SafeColor(s.Background, Color.FromRgb(0x1A, 0x1A, 0x2E))),
             PagePadding = new Thickness(s.PageMargin, s.PageMargin, s.PageMargin, s.PageMargin),
             ColumnWidth = double.PositiveInfinity,
             TextAlignment = TextAlignment.Left,
-            LineHeight = s.FontSize * s.LineSpacing
+            LineHeight = lineHeight
         };
 
         bool firstBlock = true;
@@ -54,24 +59,53 @@ public sealed class NovelDocumentBuilder
             var p = new Paragraph(new Run(block.Text))
             {
                 Margin = new Thickness(0, firstBlock ? 0 : s.ParagraphSpacing, 0, 0),
-                LineHeight = s.FontSize * s.LineSpacing
+                LineHeight = lineHeight
             };
             if (block.IsHeading)
             {
-                p.FontSize = s.FontSize + 8;
+                p.FontSize = fontSize + 8;
                 p.FontWeight = FontWeights.Bold;
                 p.TextAlignment = TextAlignment.Center;
                 p.Margin = new Thickness(0, s.ParagraphSpacing * 2, 0, s.ParagraphSpacing * 2);
             }
-            else if (s.FontSize >= 14)
+            else if (fontSize >= 14)
             {
                 // 中文排版习惯：段首缩进两字符
-                p.TextIndent = s.FontSize * 2;
+                p.TextIndent = fontSize * 2;
             }
             doc.Blocks.Add(p);
             firstBlock = false;
         }
         return doc;
+    }
+
+    /// <summary>字体名非法/系统缺失时回退到默认字体，而不是让 FlowDocument 构造抛异常。</summary>
+    private static FontFamily SafeFont(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return new FontFamily("Microsoft YaHei UI");
+        try
+        {
+            return new FontFamily(name);
+        }
+        catch
+        {
+            return new FontFamily("Microsoft YaHei UI");
+        }
+    }
+
+    /// <summary>颜色字符串非法时回退到默认色（否则 ConvertFromString 抛异常 → 书打不开）。</summary>
+    private static Color SafeColor(string? text, Color fallback)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return fallback;
+        try
+        {
+            if (ColorConverter.ConvertFromString(text) is Color c) return c;
+        }
+        catch
+        {
+            // 落到 fallback
+        }
+        return fallback;
     }
 
     private ImageSource? TryLoadImage(string entry, NovelViewSettings s)
@@ -80,9 +114,9 @@ public sealed class NovelDocumentBuilder
         {
             using var stream = _imageResolver(entry);
             if (stream.Length == 0) return null;
-            var frame = BitmapFrame.Create(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
-            frame.Freeze();
-            return frame;
+            // 统一走 DecodeFrozen：它带 OnLoad + Freeze + 异常兜底，
+            // 直接 BitmapFrame.Create 在某些编码（如 CMYK JPEG）上会抛异常导致整章图片丢失。
+            return ImageHelper.DecodeFrozen(stream);
         }
         catch
         {

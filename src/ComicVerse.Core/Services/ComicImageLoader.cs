@@ -35,17 +35,22 @@ public sealed class ComicImageLoader : IDisposable
 
     public BitmapSource? GetCached(int index) => _cache.Get(_cacheKey, index);
 
+    /// <summary>当前源（Dispose 后为 null）。用局部副本避免"闭包捕获字段 + 字段被置空"的竞态。</summary>
+    private IComicSource? SourceRef => _source;
+
     /// <summary>仅读取图片尺寸（头部解码，用于条漫/双页布局）。</summary>
     public (int Width, int Height)? GetPageSize(int index)
     {
         if (_disposed || index < 0 || index >= PageCount) return null;
+        var source = _source;
+        if (source is null) return null;
         try
         {
-            return _source.GetPageSize(index);
+            return source.GetPageSize(index);
         }
         catch (Exception ex)
         {
-            Log.Error($"读取第 {index} 页尺寸失败", ex);
+            if (!_disposed) Log.Error($"读取第 {index} 页尺寸失败", ex);
             return null;
         }
     }
@@ -136,6 +141,11 @@ public sealed class ComicImageLoader : IDisposable
 
     private async Task<BitmapSource?> DecodeAsync(int index, CancellationToken ct)
     {
+        // 先取局部引用再 await：Dispose() 会把 _source 置空，而 Task.Run 的闭包如果直接捕获字段，
+        // 排队中的解码任务就会拿到 null 触发 NRE（表现为关窗瞬间日志刷一串"解码第 N 页失败"）。
+        var source = _source;
+        if (source is null || _disposed) return null;
+
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _cts.Token);
         bool acquired = false;
         try
@@ -143,25 +153,27 @@ public sealed class ComicImageLoader : IDisposable
             await _decodeGate.WaitAsync(linked.Token).ConfigureAwait(false);
             acquired = true;
             ct.ThrowIfCancellationRequested();
+            if (_disposed) return null;   // 拿到许可时可能已被释放
             BitmapSource? img;
-            if (_source is IPageBitmapSource direct)
+            if (source is IPageBitmapSource direct)
             {
                 // PDF 等可直接出位图的源：跳过 PNG 编码/解码往返
                 img = await Task.Run(() => direct.RenderPageBitmap(index), linked.Token).ConfigureAwait(false);
             }
             else
             {
-                using var stream = await Task.Run(() => _source.GetPageStream(index), linked.Token).ConfigureAwait(false);
+                using var stream = await Task.Run(() => source.GetPageStream(index), linked.Token).ConfigureAwait(false);
                 ct.ThrowIfCancellationRequested();
                 img = ImageHelper.DecodeFrozen(stream);
             }
-            if (img is not null)
+            if (img is not null && !_disposed)
                 _cache.Put(_cacheKey, index, img);
             return img;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Log.Error($"解码第 {index} 页失败", ex);
+            // 已释放时源被关闭属于预期，不再刷日志
+            if (!_disposed) Log.Error($"解码第 {index} 页失败", ex);
             return null;
         }
         finally
@@ -171,6 +183,9 @@ public sealed class ComicImageLoader : IDisposable
         }
     }
 
+    /// <summary>当前书的缓存命名空间（ReaderWindow 关窗时用 App.SharedCache.Clear(key) 清理）。</summary>
+    public string CacheKey => _cacheKey;
+
     public void Dispose()
     {
         if (_disposed) return;
@@ -179,26 +194,29 @@ public sealed class ComicImageLoader : IDisposable
 
         Task<BitmapSource?>[] pending;
         lock (_lock) pending = _pending.Values.ToArray();
-        var source = _source;
+        var source = SourceRef;
         _source = null!;
 
-        // 等在途解码结束后再释放源，避免渲染未完成时关闭 pdfium 文档导致卡死/崩溃
+        // 等在途解码结束后再释放源，避免渲染未完成时关闭 pdfium 文档导致卡死/崩溃。
+        // 这里先同步等一小段：让已进入 RenderCore 的渲染完成，再交后台收尾剩余任务。
         Task.Run(async () =>
         {
             try
             {
                 if (pending.Length > 0)
-                    await Task.WhenAll(pending).WaitAsync(TimeSpan.FromSeconds(5));
+                    await Task.WhenAll(pending).WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
             }
             catch
             {
+                // 被取消或超时：源对象的 Dispose 对未完成的渲染也是安全的（内部有锁），继续释放
             }
             try
             {
-                source.Dispose();
+                if (source is not null) source.Dispose();
             }
-            catch
+            catch (Exception ex)
             {
+                Log.Error("释放漫画源失败", ex);
             }
         });
     }

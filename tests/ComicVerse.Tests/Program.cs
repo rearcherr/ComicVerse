@@ -1,4 +1,5 @@
 using System.IO;
+using System.IO.Compression;
 using System.Text;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -81,6 +82,10 @@ public static class Program
             Run("书库并发访问", () => TestLibraryConcurrency(samples));
             Run("取尺寸只读头部", () => TestSizeProbe(work));
             Run("文件夹导入", () => TestFolderImport(work));
+            Run("EPUB 正文无标签残留", () => TestEpubBodyHasNoTags(work));
+            Run("EPUB href 变体", () => TestEpubHrefVariants(work));
+            Run("TXT 前言/空章/目录块", TestTxtChapterEdgeCases);
+            Run("伪扩展名魔数嗅探", () => TestFakeExtensionSniffing(work));
 
             Console.WriteLine();
             Console.WriteLine($"通过 {_passed} 项，失败 {_failed} 项");
@@ -743,5 +748,204 @@ public static class Program
 
         [System.Runtime.InteropServices.DllImport("pdfium.dll", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
         public static extern double FPDF_GetPageHeight(IntPtr page);
+    }
+
+    // ================= 解析层回归测试（FIX-2） =================
+
+    /// <summary>构造一个 href 可自定义的 EPUB，用于验证 href 解析变体。</summary>
+    private static void MakeEpubWithHrefs(string path, string opfDir,
+        List<(string Href, string EntryPath, string Html)> chapters)
+    {
+        using var fs = File.Create(path);
+        using var zip = new ZipArchive(fs, ZipArchiveMode.Create);
+
+        var container = zip.CreateEntry("META-INF/container.xml");
+        using (var s = container.Open())
+        using (var w = new StreamWriter(s, new UTF8Encoding(false)))
+        {
+            w.Write("<?xml version=\"1.0\"?><container version=\"1.0\" xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\"><rootfiles><rootfile full-path=\"" +
+                    opfDir + "/content.opf\" media-type=\"application/oebps-package+xml\"/></rootfiles></container>");
+        }
+
+        var manifest = new StringBuilder();
+        var spine = new StringBuilder();
+        for (int i = 0; i < chapters.Count; i++)
+        {
+            manifest.Append($"<item id=\"c{i}\" href=\"{chapters[i].Href}\" media-type=\"application/xhtml+xml\"/>");
+            spine.Append($"<itemref idref=\"c{i}\"/>");
+        }
+
+        var opf = zip.CreateEntry(opfDir + "/content.opf");
+        using (var s = opf.Open())
+        using (var w = new StreamWriter(s, new UTF8Encoding(false)))
+        {
+            w.Write("<?xml version=\"1.0\"?><package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\" unique-identifier=\"uid\">" +
+                    "<metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:title>HrefTest</dc:title><dc:creator>A</dc:creator></metadata>" +
+                    "<manifest>" + manifest + "</manifest><spine>" + spine + "</spine></package>");
+        }
+
+        foreach (var (_, entryPath, html) in chapters)
+        {
+            var xh = zip.CreateEntry(entryPath);
+            using var s = xh.Open();
+            using var w = new StreamWriter(s, new UTF8Encoding(false));
+            w.Write($"<?xml version=\"1.0\" encoding=\"utf-8\"?><html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>t</title></head><body><h1>章</h1>{html}</body></html>");
+        }
+    }
+
+    private static void TestEpubBodyHasNoTags(string work)
+    {
+        // 正文必须不含任何标签字符；XML 声明与 <head> 内容也不能混进来
+        string path = Path.Combine(work, "body-tags.epub");
+        TestData.MakeEpub(path, "标签测试", "作者", new List<(string, string)>
+        {
+            ("第一章", "<p>正文一</p><p>正文二</p>"),
+        });
+
+        var book = new EpubParser().Parse(path);
+        Assert(book.Chapters.Count == 1, "EPUB 章节数错误: " + book.Chapters.Count);
+
+        var texts = book.Chapters[0].Blocks.Where(b => !b.IsImage && b.Text is not null).Select(b => b.Text!).ToList();
+        Assert(texts.Count > 0, "EPUB 正文为空");
+
+        foreach (string t in texts)
+        {
+            Assert(!t.Contains('<'), "EPUB 正文残留标签字符 '<': \"" + t + "\"");
+            Assert(!t.Contains('>'), "EPUB 正文残留标签字符 '>': \"" + t + "\"");
+            Assert(!t.Contains("<?xml"), "EPUB 正文混入 XML 声明: \"" + t + "\"");
+        }
+
+        Assert(texts.Any(t => t.Contains("正文一")), "EPUB 正文第一段缺失");
+        Assert(texts.Any(t => t.Contains("正文二")), "EPUB 正文第二段缺失");
+    }
+
+    private static void TestEpubHrefVariants(string work)
+    {
+        // 5 种合法 href 写法都必须能解析出章节
+        var cases = new (string Name, string Href, string Entry)[]
+        {
+            ("普通相对路径", "c0.xhtml", "OEBPS/c0.xhtml"),
+            ("fragment", "c0.xhtml#part1", "OEBPS/c0.xhtml"),
+            ("query", "c0.xhtml?v=1", "OEBPS/c0.xhtml"),
+            ("百分号编码", "my%20chapter.xhtml", "OEBPS/my chapter.xhtml"),
+            ("leading slash", "/ch0.xhtml", "OEBPS/ch0.xhtml"),
+            ("父目录 ../", "../text/c0.xhtml", "text/c0.xhtml"),
+        };
+
+        foreach (var (name, href, entry) in cases)
+        {
+            string path = Path.Combine(work, "href-" + Guid.NewGuid().ToString("N")[..6] + ".epub");
+            MakeEpubWithHrefs(path, "OEBPS", new List<(string, string, string)>
+            {
+                (href, entry, "<p>正文内容</p>"),
+            });
+
+            NovelBook book;
+            try
+            {
+                book = new EpubParser().Parse(path);
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"EPUB href「{name}」({href}) 解析失败: {ex.Message}");
+            }
+
+            Assert(book.Chapters.Count == 1, $"EPUB href「{name}」({href}) 章节数错误: {book.Chapters.Count}");
+            Assert(book.Chapters[0].Blocks.Any(b => b.Text is not null && b.Text.Contains("正文内容")),
+                $"EPUB href「{name}」({href}) 正文缺失");
+        }
+    }
+
+    private static void TestTxtChapterEdgeCases()
+    {
+        // 1) 首个标题之前的前言不能被当成第 0 章，也不能覆盖书名
+        var b1 = TxtParser.Parse("书名：测试\n作者：某某\n\n第一章 起始\n内容一", "书");
+        Assert(b1.Chapters.Count == 1, "前言被误当成独立章节: " + b1.Chapters.Count);
+        Assert(b1.Chapters[0].Title == "第一章 起始", "首章标题被前言覆盖: " + b1.Chapters[0].Title);
+        Assert(b1.Chapters[0].Blocks.Any(x => x.Text is not null && x.Text.Contains("书名：测试")),
+            "前言内容丢失");
+
+        // 2) 连续两个标题不能产生只有标题的空章
+        var b2 = TxtParser.Parse("第一章 起始\n内容一\n\n第二章 结束\n第三章 开始\n内容三", "书");
+        Assert(b2.Chapters.Count == 2, "连续标题产生了多余章节: " + b2.Chapters.Count);
+        foreach (var c in b2.Chapters)
+        {
+            Assert(c.Blocks.Any(x => !x.IsHeading), "出现只有标题没有正文的空章: " + c.Title);
+        }
+
+        // 3) 文首目录块不应被当成正文，同名首章不能被吞掉
+        var b3 = TxtParser.Parse(
+            "第一章 起始\n第二章 结束\n第三章 开始\n\n\n第一章 起始\n正文一\n第二章 结束\n正文二", "书");
+        Assert(b3.Chapters.Count == 2, "目录块未被识别，章节数=" + b3.Chapters.Count);
+        Assert(b3.Chapters[0].Title == "第一章 起始", "目录块处理错误，首章标题=" + b3.Chapters[0].Title);
+        Assert(b3.Chapters[0].Blocks.Any(x => x.Text is not null && x.Text.Contains("正文一")),
+            "目录块处理错误，首章正文丢失");
+        Assert(b3.Chapters[1].Title == "第二章 结束", "目录块处理错误，次章标题=" + b3.Chapters[1].Title);
+        foreach (var c in b3.Chapters)
+        {
+            Assert(c.Blocks.Any(x => !x.IsHeading), "目录块残留了只有标题的空章: " + c.Title);
+        }
+
+        // 4) 补全的标题分隔符：：、. 都要能识别
+        foreach (string heading in new[] { "第一章：开始", "第一章、开始", "第一章.开始", "第五話 終章", "番外 其一" })
+        {
+            var b = TxtParser.Parse("正文前\n" + heading + "\n正文后", "书");
+            Assert(b.Chapters.Any(c => c.Title == heading || c.Title.Contains(heading)),
+                $"标题分隔符未识别: {heading}（章节=" + string.Join("/", b.Chapters.Select(c => c.Title)) + "）");
+        }
+
+        // 5) 行中出现的标题词不应误判
+        var b5 = TxtParser.Parse("这是第一章 起始 出现在中间的一句话。\n正文", "书");
+        Assert(b5.Chapters.Count == 1, "行中标题词被误判为章节");
+    }
+
+    private static void TestFakeExtensionSniffing(string work)
+    {
+        string imgDir = Path.Combine(work, "sniff-imgs");
+        Directory.CreateDirectory(imgDir);
+        var pages = new List<string>();
+        for (int i = 1; i <= 3; i++)
+        {
+            string p = Path.Combine(imgDir, $"p{i}.png");
+            TestData.MakePng(p, 400, 600, Color.FromRgb((byte)(60 * i), 90, 160), "P" + i);
+            pages.Add(p);
+        }
+
+        // 真正的 ZIP 内容，用各种"错误"扩展名保存，都应能打开
+        string realZip = Path.Combine(work, "sniff-real.zip");
+        TestData.MakeCbz(realZip, pages.Select((p, i) => ($"p{i + 1}.png", p)));
+
+        foreach (string ext in new[] { ".cbz", ".cbr", ".rar", ".cbt", ".tar", ".cb7", ".7z", ".zip" })
+        {
+            string fake = Path.Combine(work, "sniff-zip" + ext);
+            File.Copy(realZip, fake, true);
+            using var source = ComicSourceFactory.Create(fake);
+            Assert(source.PageCount == 3, $"ZIP 内容命名为 {ext} 打开失败，页数={source.PageCount}");
+        }
+
+        // 真正的 TAR 内容，命名为 .cbr / .cbz 也应能打开
+        string realTar = Path.Combine(work, "sniff-real.tar");
+        TestData.MakeTar(realTar, pages.Select((p, i) => ($"p{i + 1}.png", p)));
+
+        foreach (string ext in new[] { ".cbt", ".tar", ".cbr", ".cbz", ".zip" })
+        {
+            string fake = Path.Combine(work, "sniff-tar" + ext);
+            File.Copy(realTar, fake, true);
+            using var source = ComicSourceFactory.Create(fake);
+            Assert(source.PageCount == 3, $"TAR 内容命名为 {ext} 打开失败，页数={source.PageCount}");
+        }
+
+        // 损坏的文件必须给出有意义的错误，而不是被无关格式的 "Rar signature not found" 掩盖
+        string garbage = Path.Combine(work, "sniff-garbage.cbr");
+        File.WriteAllBytes(garbage, Encoding.ASCII.GetBytes("PK\u0003\u0004this is not a real zip archive"));
+        try
+        {
+            using var source = ComicSourceFactory.Create(garbage);
+            Assert(false, "损坏的 .cbr 竟然打开成功，页数=" + source.PageCount);
+        }
+        catch (ComicSourceException ex)
+        {
+            Assert(!ex.Message.Contains("未找到图片"), "损坏文件被误报为「未找到图片」: " + ex.Message);
+        }
     }
 }

@@ -56,6 +56,8 @@ public partial class ReaderWindow : Window
     private bool _updatingSlider;
     private bool _sliderActive;
     private bool _changingChapter;
+    /// <summary>正在用持久化值给排版控件赋初值：此时控件事件不算"用户改动"，不要触发重排/回写。</summary>
+    private bool _loadingNovelUi;
     private bool _barsVisible = true;
     private CancellationTokenSource? _pageLoadCts;
     private long _pageLoadVersion;
@@ -78,7 +80,8 @@ public partial class ReaderWindow : Window
     internal bool IsComicPageLoaded => _mode == "paged" && PageImage.Source is not null;
     internal bool IsWebtoonReady => _webtoonInitialized && WebtoonView.IsReady && WebtoonView.PageCount > 0;
     internal int WebtoonPageCount => WebtoonView.PageCount;
-    internal bool IsNovelReady => _novel is not null && NovelPaged.Document is not null;
+    /// <summary>小说是否已就绪：翻页模式看 NovelPaged，滚动模式看 NovelScroll（二者互斥占用同一个文档）。</summary>
+    internal bool IsNovelReady => _novel is not null && (NovelPaged.Document is not null || NovelScroll.Document is not null);
     internal bool IsDoubleReady => _mode == "double" && (LeftImage.Source is not null || RightImage.Source is not null);
     internal string WebtoonStats => $"canvas={WebtoonView.CanvasWidth:F0}x{WebtoonView.CanvasHeight:F0} rendered={WebtoonView.RenderedCount} scale={_zoom:F2}";
     internal void TestSwitchToWebtoon() => ModeWebtoon.IsChecked = true;
@@ -112,6 +115,10 @@ public partial class ReaderWindow : Window
     internal (int First, int Last) WebtoonVisibleRange => (WebtoonView.VisibleFirst, WebtoonView.VisibleLast);
     internal int CurrentPageNumber => _page;
     internal int ComicPageCount => _loader?.PageCount ?? 0;
+    /// <summary>双页模式下的当前跨页起始页（相当于"当前游标"）。</summary>
+    internal int CurrentSpreadStart => _spreadStart;
+    internal void TestSetFontSize(double size) => FontSizeSlider.Value = size;
+    internal void TestFlushSave() => SaveNow();
     /// <summary>模拟真实拖动进度条：按下 → 连续改值 → 松手跳页。</summary>
     internal void TestSliderDrag(double fromFraction, double toFraction, int steps = 12)
     {
@@ -146,6 +153,65 @@ public partial class ReaderWindow : Window
         (NovelPaged.Document as System.Windows.Documents.FlowDocument)?.Background is System.Windows.Media.SolidColorBrush b
             ? b.Color.ToString()
             : "";
+
+    // ---- 自检钩子：小说子模式 / 滚动位置 / 排版设置（--smoke 使用）----
+    internal string NovelSubMode => _novelSubMode;
+    internal double NovelScrollFraction => _novelScrollFraction;
+    /// <summary>滚动子模式下滑动视图的实际可滚动高度（0 = 本章一屏就能显示完，滚不动）。</summary>
+    internal double NovelScrollableHeight
+        => VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll)?.ScrollableHeight ?? 0;
+    /// <summary>滚动子模式下 ScrollViewer 的真实滚动位置（0..1）。用于核对"已滚动"是否真的落到了视图上。</summary>
+    internal double NovelActualScrollFraction
+    {
+        get
+        {
+            var sv = VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll);
+            return sv is null || sv.ScrollableHeight <= 0.5 ? 0 : sv.VerticalOffset / sv.ScrollableHeight;
+        }
+    }
+    /// <summary>诊断：当前正在显示的滚动文档有几个块、总字符数。</summary>
+    internal string NovelScrollDocDiagnostics
+    {
+        get
+        {
+            var doc = NovelScroll.Document as FlowDocument;
+            if (doc is null) return "doc=null";
+            var blocks = doc.Blocks.ToList();
+            int chars = 0;
+            foreach (var b in blocks)
+                if (b is Paragraph p) chars += new System.Windows.Documents.TextRange(p.ContentStart, p.ContentEnd).Text.Length;
+            return $"docBlocks={blocks.Count} docChars={chars} pagedVis={NovelPaged.Visibility} scrollVis={NovelScroll.Visibility} " +
+                   $"mode={_mode} sub={_novelSubMode} chIdx={_novelChapter} novelCh={_novel?.Chapters.Count} settingsFS={_novelSettings.FontSize}";
+        }
+    }
+    /// <summary>诊断：小说是否已初始化完成。</summary>
+    internal string NovelProbeDetail
+        => $"novelParsed={_novel?.Chapters.Count ?? -1} viewVis={NovelView.Visibility} pagedDoc={(NovelPaged.Document is null ? "null" : "set")} " +
+           $"scrollDoc={(NovelScroll.Document is null ? "null" : "set")} title={TitleText.Text}";
+    /// <summary>诊断：解析出的小说章节数。</summary>
+    internal int NovelChapterCount => _novel?.Chapters.Count ?? 0;
+    /// <summary>诊断：本次打开过程中章节被改写的轨迹（临时探针）。</summary>
+    internal static readonly List<string> longNovelTrack = new();
+    internal IReadOnlyList<string> NovelTrace => longNovelTrack;
+    /// <summary>把滚动视图滚到本章的指定相对位置，并同步记录到 _novelScrollFraction。</summary>
+    internal bool TestNovelScrollToFraction(double fraction)
+    {
+        if (_novelSubMode != "scroll")
+        {
+            NovelModeScroll.IsChecked = true;
+            ApplyNovelSubMode();
+            // 刚切到滚动模式时 FlowDocument 还没挂上、ScrollableHeight 仍为 0，
+            // 这里不能在同一个同步回合里就判定失败：先让布局跑完再试。
+            Dispatcher.Invoke(() => { }, DispatcherPriority.Loaded);
+        }
+        var sv = VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll);
+        if (sv is null || sv.ScrollableHeight <= 0.5) return false;
+        _novelScrollFraction = Math.Clamp(fraction, 0, 1);
+        sv.ScrollToVerticalOffset(_novelScrollFraction * sv.ScrollableHeight);
+        UpdateNovelInfo();
+        return true;
+    }
+    internal double FontSizeSetting => _novelSettings.FontSize;
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
@@ -269,6 +335,10 @@ public partial class ReaderWindow : Window
         }
 
         _novelSettings = App.Settings.NovelSettings.Clone();
+        // 持久化的排版设置没有任何范围校验：JSON 里出现 null/"" 的颜色会让 NovelDocumentBuilder
+        // 抛 NullReferenceException/FormatException（整本小说打不开），越界的字号也会炸。
+        // NovelDocumentBuilder 属于 Core（别人在改），所以在这里做兜底校验。
+        SanitizeNovelSettings(_novelSettings);
         ChapterList.ItemsSource = _novel.Chapters.Select((c, i) => $"{i + 1}. {c.Title}").ToList();
         LoadNovelSettingsUi();
         ApplyThemeToNovelSettings(rebuild: false);
@@ -277,8 +347,11 @@ public partial class ReaderWindow : Window
         int chapter = prog is null ? 0 : Math.Clamp(prog.ChapterIndex, 0, _novel.Chapters.Count - 1);
         _novelPage = prog?.PageIndex ?? 0;
         _novelScrollFraction = prog?.ScrollOffset ?? 0;
-        _novelSubMode = "paged";
-        NovelModePaged.IsChecked = true;
+        // 子模式此前恒为「翻页」，导致滚动模式的阅读位置每次都被丢弃。
+        // 现在把子模式编进 Mode（"novel:scroll" / "novel:paged"）并读回。
+        _novelSubMode = _fromStart ? "paged" : ParseNovelSubMode(prog?.Mode);
+        if (_novelSubMode == "scroll") NovelModeScroll.IsChecked = true;
+        else NovelModePaged.IsChecked = true;
         NovelView.Visibility = Visibility.Visible;
         ComicPagedView.Visibility = WebtoonView.Visibility = DoubleView.Visibility = Visibility.Collapsed;
         _mode = "novel";
@@ -304,6 +377,13 @@ public partial class ReaderWindow : Window
 
     private void ShowComicPaged(int index)
     {
+        // 双页用的是 _spreadStart 游标；切回翻页时必须先把它同步给 _page，
+        // 否则会跳回进入双页之前的旧位置（读了几十个跨页后点「翻页」直接回到起点附近）。
+        if (_mode == "double")
+        {
+            _page = _spreadStart;
+            index = _spreadStart;
+        }
         _mode = "paged";
         ComicPagedView.Visibility = Visibility.Visible;
         WebtoonView.Visibility = DoubleView.Visibility = NovelView.Visibility = Visibility.Collapsed;
@@ -463,10 +543,20 @@ public partial class ReaderWindow : Window
         else Prev();
     }
 
+    /// <summary>
+    /// 键盘焦点是否落在需要用 ←/→ 的控件上（排版滑块、下拉框、章节目录、输入框）。
+    /// PreviewKeyDown 在窗口层先于控件执行，不加这个判断的话整窗的 ←/→ 都会被翻页吞掉，
+    /// 「排版」面板里就没法用方向键调滑块的焦点/数值，目录也选不中。
+    /// </summary>
+    private static bool IsKeyboardInputFocused()
+        => Keyboard.FocusedElement is Slider or ComboBox or ComboBoxItem or ListBoxItem or ListBox or System.Windows.Controls.Primitives.TextBoxBase;
+
     private void UpdateComicInfo()
     {
         if (_loader is null) return;
         int count = _loader.PageCount;
+        // 双页时游标是 _spreadStart：标签和进度条都必须用它，否则双页阅读时进度条一动不动
+        int cursor = _mode == "double" ? _spreadStart : _page;
         string info;
         if (_mode == "double")
         {
@@ -478,7 +568,7 @@ public partial class ReaderWindow : Window
             info = $"{_page + 1} / {count}";
         }
         PageInfoText.Text = info;
-        SetSlider((double)(_page + 1) / count);
+        SetSlider((double)(cursor + 1) / Math.Max(1, count));
     }
 
     #endregion
@@ -501,6 +591,8 @@ public partial class ReaderWindow : Window
             {
                 if (_mode != "webtoon") return; // 条漫不可见时忽略滚动事件，避免覆盖翻页/双页的页码
                 _page = idx;
+                // 同时记住在文档里的相对位置：离开条漫再回来、或下次打开时都靠它恢复
+                _webtoonFraction = WebtoonView.ScrollFraction;
                 PageInfoText.Text = $"{idx + 1} / {_loader!.PageCount}";
                 SetSlider((double)(idx + 1 + WebtoonView.ScrollFraction) / _loader.PageCount);
                 ScheduleSave();
@@ -511,8 +603,21 @@ public partial class ReaderWindow : Window
             if (_closed || _mode != "webtoon") return;
             _ = Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
             {
+                if (_closed || _mode != "webtoon") return;
                 WebtoonView.EnsureLayout();
                 WebtoonView.ScrollToFraction(_fromStart ? 0 : _webtoonFraction);
+                UpdateComicInfo();
+            });
+        }
+        else
+        {
+            // 再次进入条漫（翻页/双页 → 条漫）：初始化块不会重跑，这里必须自己把位置还原，
+            // 否则会停在文档开头并且页码/进度条与画面不一致。
+            _ = Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
+            {
+                if (_closed || _mode != "webtoon" || _loader is null || _loader.PageCount == 0) return;
+                WebtoonView.EnsureLayout();
+                WebtoonView.ScrollToPage(Math.Clamp(_page, 0, _loader.PageCount - 1));
                 UpdateComicInfo();
             });
         }
@@ -669,6 +774,7 @@ public partial class ReaderWindow : Window
     private void LoadNovelChapter(int index, bool resetPosition = true)
     {
         if (_novel is null) return;
+        longNovelTrack.Add($"LoadNovelChapter({index}) 调用方={new System.Diagnostics.StackTrace().GetFrame(1)?.GetMethod()?.Name} reset={resetPosition}");
         _novelChapter = Math.Clamp(index, 0, _novel.Chapters.Count - 1);
         var chapter = _novel.Chapters[_novelChapter];
         var builder = new NovelDocumentBuilder(_imageResolver);
@@ -709,8 +815,10 @@ public partial class ReaderWindow : Window
             if (_novelSubMode == "scroll")
             {
                 var sv = VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll);
-                if (sv is not null)
-                    sv.ScrollToVerticalOffset(_novelScrollFraction * Math.Max(0, sv.ScrollableHeight));
+                if (sv is not null && sv.ScrollableHeight > 0.5)
+                    sv.ScrollToVerticalOffset(_novelScrollFraction * sv.ScrollableHeight);
+                else
+                    RestoreNovelScrollFraction();   // 文档还没量出高度：继续等
             }
             UpdateNovelInfo();
         });
@@ -721,6 +829,10 @@ public partial class ReaderWindow : Window
         int pages = NovelPaged.PageCount;
         return pages > 0 ? pages : 1;
     }
+
+    /// <summary>阅读进度里的 Mode 对小说是 "novel:paged" / "novel:scroll"；旧库可能是 "novel" 或空串。</summary>
+    private static string ParseNovelSubMode(string? mode)
+        => mode is not null && mode.EndsWith(":scroll", StringComparison.Ordinal) ? "scroll" : "paged";
 
     private void ApplyNovelSubMode()
     {
@@ -736,9 +848,10 @@ public partial class ReaderWindow : Window
             {
                 Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
                 {
-                    var sv = VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll);
-                    if (sv is not null)
-                        sv.ScrollToVerticalOffset(_novelScrollFraction * Math.Max(0, sv.ScrollableHeight));
+                    if (_closed) return;
+                    // doc 为 null 也要重试：InitNovelAsync 里本方法先于 LoadNovelChapter 执行，
+                    // 那时文档还没挂上；但此刻 _novel 与 _novelScrollFraction 都已就绪。
+                    RestoreNovelScrollFraction();
                     UpdateNovelInfo();
                 });
             }
@@ -750,6 +863,7 @@ public partial class ReaderWindow : Window
             if (doc is not null) NovelPaged.Document = doc;
             Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
             {
+                if (_closed) return;
                 int pages = _chapterPages.GetValueOrDefault(_novelChapter, 1);
                 NovelPaged.GoToPage(Math.Clamp(_novelPage, 0, pages - 1));
                 UpdateNovelInfo();
@@ -757,6 +871,42 @@ public partial class ReaderWindow : Window
         }
         StopAutoScroll();
     }
+
+    /// <summary>
+    /// 把 <see cref="_novelScrollFraction"/> 落到滚动视图上。打开流程里 ApplyNovelSubMode 先于
+    /// LoadNovelChapter 执行（此时文档还没挂上），所以这里要一直重试到真正有滚动高度为止，
+    /// 否则"上次读到一半"会被悄悄恢复成章首。
+    /// </summary>
+    private void RestoreNovelScrollFraction(int attempt = 0)
+    {
+        if (_closed || _novel is null || _novelSubMode != "scroll") return;
+        if (_novelScrollFraction <= 0) return;          // 本来就在章首，无需滚动
+        var sv = VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll);
+        if (sv is null)
+        {
+            if (attempt >= MaxScrollRestoreAttempts) return;
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () => RestoreNovelScrollFraction(attempt + 1));
+            return;
+        }
+        if (sv.ScrollableHeight > 0.5)
+        {
+            sv.ScrollToVerticalOffset(_novelScrollFraction * sv.ScrollableHeight);
+            return;
+        }
+        // 文档已挂上但还没量完：强制跑一次布局，让 ScrollableHeight 变成有效值再滚，
+        // 比空转 30 个 100ms 的回合快得多，也更容易在断言等待窗口内落位。
+        NovelScroll.UpdateLayout();
+        sv = VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll) ?? sv;
+        if (sv.ScrollableHeight > 0.5)
+        {
+            sv.ScrollToVerticalOffset(_novelScrollFraction * sv.ScrollableHeight);
+            return;
+        }
+        if (attempt >= MaxScrollRestoreAttempts) return;
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () => RestoreNovelScrollFraction(attempt + 1));
+    }
+
+    private const int MaxScrollRestoreAttempts = 30;
 
     private void NovelMode_Changed(object sender, RoutedEventArgs e)
     {
@@ -845,7 +995,11 @@ public partial class ReaderWindow : Window
         if (_novelSubMode == "scroll")
         {
             var sv = VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll);
-            _novelScrollFraction = sv is null || sv.ScrollableHeight <= 0 ? 0 : sv.VerticalOffset / sv.ScrollableHeight;
+            // 注意：文档还没量出高度时不能把 _novelScrollFraction 归零——那时 VerticalOffset 恒为 0，
+            // 归零会把刚从上一次阅读恢复出来的滚动位置直接抹掉（重开就回到章首）。
+            // 只有视图真的可滚动时才用它的实际位置覆盖记录值。
+            if (sv is not null && sv.ScrollableHeight > 0.5)
+                _novelScrollFraction = Math.Clamp(sv.VerticalOffset / sv.ScrollableHeight, 0, 1);
             fraction = _novelScrollFraction;
         }
         else
@@ -860,23 +1014,34 @@ public partial class ReaderWindow : Window
 
     private void LoadNovelSettingsUi()
     {
-        var fonts = System.Windows.Media.Fonts.SystemFontFamilies
-            .Select(f => f.Source)
-            .Where(s => !string.IsNullOrWhiteSpace(s))
-            .Take(200)
-            .ToList();
-        FontCombo.ItemsSource = fonts;
-        FontCombo.SelectedItem = fonts.FirstOrDefault(f => f.Contains(_novelSettings.FontFamily, StringComparison.OrdinalIgnoreCase))
-                                 ?? fonts.FirstOrDefault(f => f.Contains("YaHei", StringComparison.OrdinalIgnoreCase));
+        // 这里给控件赋初值会触发 SelectionChanged/ValueChanged → NovelSetting_Changed。
+        // 没有这个旗标的话，每次打开小说都会在 350ms 后"回读"一遍并覆盖设置（还会把全局默认改掉）。
+        _loadingNovelUi = true;
+        try
+        {
+            var fonts = System.Windows.Media.Fonts.SystemFontFamilies
+                .Select(f => f.Source)
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Take(200)
+                .ToList();
+            FontCombo.ItemsSource = fonts;
+            FontCombo.SelectedItem = fonts.FirstOrDefault(f => f.Contains(_novelSettings.FontFamily, StringComparison.OrdinalIgnoreCase))
+                                     ?? fonts.FirstOrDefault(f => f.Contains("YaHei", StringComparison.OrdinalIgnoreCase));
 
-        FontSizeSlider.Value = _novelSettings.FontSize;
-        LineSpacingSlider.Value = _novelSettings.LineSpacing;
-        ParagraphSpacingSlider.Value = _novelSettings.ParagraphSpacing;
-        MarginSlider.Value = _novelSettings.PageMargin;
-        SelectComboByTag(TextColorCombo, _novelSettings.TextColor);
-        SelectComboByTag(BgColorCombo, _novelSettings.Background);
-        EncodingCombo.SelectedIndex = 0;
-        AutoSpeedSlider.Value = 60;
+            // 越界的持久化值会被 Slider 静默钳到边界，再被回写成"用户选择"，所以先夹紧再赋值
+            FontSizeSlider.Value = Math.Clamp(_novelSettings.FontSize, FontSizeSlider.Minimum, FontSizeSlider.Maximum);
+            LineSpacingSlider.Value = Math.Clamp(_novelSettings.LineSpacing, LineSpacingSlider.Minimum, LineSpacingSlider.Maximum);
+            ParagraphSpacingSlider.Value = Math.Clamp(_novelSettings.ParagraphSpacing, ParagraphSpacingSlider.Minimum, ParagraphSpacingSlider.Maximum);
+            MarginSlider.Value = Math.Clamp(_novelSettings.PageMargin, MarginSlider.Minimum, MarginSlider.Maximum);
+            SelectComboByTag(TextColorCombo, _novelSettings.TextColor);
+            SelectComboByTag(BgColorCombo, _novelSettings.Background);
+            EncodingCombo.SelectedIndex = 0;
+            AutoSpeedSlider.Value = 60;
+        }
+        finally
+        {
+            _loadingNovelUi = false;
+        }
     }
 
     private static void SelectComboByTag(ComboBox combo, string tag)
@@ -892,9 +1057,38 @@ public partial class ReaderWindow : Window
         combo.SelectedIndex = 0;
     }
 
+    /// <summary>
+    /// 把持久化来的排版设置夹到安全范围：颜色为 null/空/无法解析时回落到默认值，
+    /// 字号等数值夹到滑块范围内。不这么做的话，一条脏设置会让这本书永久打不开。
+    /// </summary>
+    private static void SanitizeNovelSettings(NovelViewSettings s)
+    {
+        s.FontFamily = string.IsNullOrWhiteSpace(s.FontFamily) ? "Microsoft YaHei UI" : s.FontFamily;
+        s.TextColor = NormalizeColor(s.TextColor, "#E8E8F4");
+        s.Background = NormalizeColor(s.Background, "#1A1A2E");
+        s.FontSize = double.IsFinite(s.FontSize) ? Math.Clamp(s.FontSize, 12, 32) : 18;
+        s.LineSpacing = double.IsFinite(s.LineSpacing) ? Math.Clamp(s.LineSpacing, 1.2, 2.5) : 1.7;
+        s.ParagraphSpacing = double.IsFinite(s.ParagraphSpacing) ? Math.Clamp(s.ParagraphSpacing, 0, 24) : 8;
+        s.PageMargin = double.IsFinite(s.PageMargin) ? Math.Clamp(s.PageMargin, 24, 120) : 56;
+    }
+
+    private static string NormalizeColor(string? value, string fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return fallback;
+        try
+        {
+            _ = (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(value);
+            return value;
+        }
+        catch
+        {
+            return fallback;
+        }
+    }
+
     private void NovelSetting_Changed(object sender, RoutedEventArgs e)
     {
-        if (!IsLoaded) return;
+        if (_loadingNovelUi || !IsLoaded || _closed) return;
         (_rebuildTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) }).Stop();
         _rebuildTimer.Tick -= RebuildNovel_Tick;
         _rebuildTimer.Tick += RebuildNovel_Tick;
@@ -903,27 +1097,32 @@ public partial class ReaderWindow : Window
 
     private void NovelSettingSlider_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
-        if (!IsLoaded) return;
+        if (_loadingNovelUi || !IsLoaded || _closed) return;
         NovelSetting_Changed(sender, new RoutedEventArgs());
     }
 
     private void RebuildNovel_Tick(object? sender, EventArgs e)
     {
         if (_rebuildTimer is not null) _rebuildTimer.Stop();
+        // 关窗/初始化失败后 tick 仍可能到期：没有守卫时会在已销毁的控件上重排文档
+        if (_closed || !IsLoaded || _novel is null || _novel.Chapters.Count == 0) return;
         ReadNovelSettingsFromUi();
         RebuildNovelDocumentNow();
     }
 
     private void ReadNovelSettingsFromUi()
     {
+        if (TextColorCombo.SelectedItem is not ComboBoxItem textColor) return;   // 还没选好就别半套应用
+        if (BgColorCombo.SelectedItem is not ComboBoxItem bgColor) return;
         _novelSettings.FontFamily = FontCombo.SelectedItem as string ?? _novelSettings.FontFamily;
         _novelSettings.FontSize = FontSizeSlider.Value;
         _novelSettings.LineSpacing = LineSpacingSlider.Value;
         _novelSettings.ParagraphSpacing = ParagraphSpacingSlider.Value;
         _novelSettings.PageMargin = MarginSlider.Value;
-        _novelSettings.TextColor = (TextColorCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? _novelSettings.TextColor;
-        _novelSettings.Background = (BgColorCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? _novelSettings.Background;
-        App.Settings.NovelSettings = _novelSettings;
+        _novelSettings.TextColor = textColor.Tag as string ?? _novelSettings.TextColor;
+        _novelSettings.Background = bgColor.Tag as string ?? _novelSettings.Background;
+        // 注意：这里不写 App.Settings.NovelSettings。排版是"这本书/这个窗口"的状态，
+        // 以前在这里回写全局，导致改一本书的字号会把其它书的默认值一起改掉。
     }
 
     private void RebuildNovelDocumentNow()
@@ -982,7 +1181,11 @@ public partial class ReaderWindow : Window
 
     private void Encoding_Changed(object sender, RoutedEventArgs e)
     {
-        if (!IsLoaded || _book.Format == BookFormat.Epub || EncodingCombo.SelectedIndex < 0) return;
+        // 打开小说时 LoadNovelSettingsUi 会给 EncodingCombo 赋初值，这里也会被触发。
+        // 那条路径必须忽略：否则 ReloadTxtAsync 会在 InitNovelAsync 恢复章节之前
+        // 重新解析并 LoadNovelChapter(0)，把刚恢复的进度（章节/滚动位置）全部覆盖掉。
+        if (_loadingNovelUi || !IsLoaded || _closed) return;
+        if (_book.Format == BookFormat.Epub || EncodingCombo.SelectedIndex < 0) return;
         _txtEncoding = EncodingCombo.SelectedIndex switch
         {
             1 => new UTF8Encoding(false),
@@ -996,12 +1199,18 @@ public partial class ReaderWindow : Window
 
     private async Task ReloadTxtAsync()
     {
+        longNovelTrack.Add($"ReloadTxtAsync 进入(旧ch={_novelChapter})");
         byte[] bytes = await Task.Run(() => File.ReadAllBytes(_book.FilePath));
-        var enc = _txtEncoding ?? EncodingDetector.Detect(bytes);
-        _novel = TxtParser.Parse(enc.GetString(bytes), _book.Title);
+        // 重新解析要占用几百毫秒，期间用户可能已经手动换章/关窗：
+        // 这里把"重新解析开始前"的章节记下来，不要无条件回到第 0 章。
+        if (_closed || _novel is null) return;
+        int keepChapter = _novelChapter;
+        var parsed = TxtParser.Parse(_txtEncoding is null ? EncodingDetector.Detect(bytes).GetString(bytes) : _txtEncoding.GetString(bytes), _book.Title);
+        if (_closed) return;
+        _novel = parsed;
         ChapterList.ItemsSource = _novel.Chapters.Select((c, i) => $"{i + 1}. {c.Title}").ToList();
         _chapterPages.Clear();
-        LoadNovelChapter(0);
+        LoadNovelChapter(Math.Clamp(keepChapter, 0, Math.Max(0, _novel.Chapters.Count - 1)));
     }
 
     private void AutoScroll_Changed(object sender, RoutedEventArgs e)
@@ -1120,7 +1329,10 @@ public partial class ReaderWindow : Window
 
     private void AddBookmark_Click(object sender, RoutedEventArgs e)
     {
-        int page = _mode == "novel" ? _novelPage : _page;
+        // 双页模式下当前页是 _spreadStart，用 _page 会把书签存到进入双页之前的旧页
+        int page = _mode == "novel" ? _novelPage
+                 : _mode == "double" ? _spreadStart
+                 : _page;
         int chapter = _mode == "novel" ? _novelChapter : 0;
         App.Library.AddBookmark(new Bookmark { BookId = _book.Id, PageIndex = page, ChapterIndex = chapter });
         RefreshBookmarks();
@@ -1167,6 +1379,8 @@ public partial class ReaderWindow : Window
     {
         _saveTimer.Stop();
         if (_closed || _book.Id <= 0) return;
+        // 书可能已在书架里被"移出"或重建：重新绑定到现存的行，否则进度会静默地永远存不进去
+        if (!EnsureBookIdCurrent()) return;
         int page = _page;
         int chapter = 0;
         double scroll = 0;
@@ -1190,8 +1404,11 @@ public partial class ReaderWindow : Window
             page = _mode == "double" ? _spreadStart : _page;
             if (_mode == "webtoon")
             {
+                // 条漫：page = 当前页，scroll = 该页内的相对位置；两者一起才能还原到原处
                 scroll = WebtoonView.ScrollFraction;
                 page = WebtoonView.CurrentPage;
+                _page = page;
+                _webtoonFraction = scroll;
                 percent = Math.Clamp((double)(page + scroll + 1) / _loader.PageCount, 0, 1);
             }
             else
@@ -1204,7 +1421,9 @@ public partial class ReaderWindow : Window
             percent = _book.Progress;
         }
 
-        string mode = _mode;
+        // 小说的子模式（翻页/滚动）也是阅读位置的一部分：不存下来的话，
+        // 滚动模式读到的位置下次一律按「翻页第 1 页」恢复。
+        string mode = _mode == "novel" ? "novel:" + _novelSubMode : _mode;
         double zoom = 0;
         if (_mode == "webtoon") zoom = _zoom;
         else if (_mode is "paged" or "double") zoom = Math.Round(PageScale.ScaleX, 3);
@@ -1218,6 +1437,30 @@ public partial class ReaderWindow : Window
             Log.Error("保存进度失败", ex);
         }
     }
+
+    /// <summary>
+    /// 校验 <see cref="_book"/>.Id 仍指向库中存在的行；若已被删除/重建，则按路径重新绑定。
+    /// 返回 false 表示这本书确实已不在书架中，本次不保存（应停止后续自动保存）。
+    /// </summary>
+    private bool EnsureBookIdCurrent()
+    {
+        try
+        {
+            if (App.Library.GetBook(_book.Id) is not null) return true;
+            var live = App.Library.GetBookByPath(Path.GetFullPath(_book.FilePath));
+            if (live is null) return false;
+            _book.Id = live.Id;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Error("重新绑定书库条目失败", ex);
+            return false;
+        }
+    }
+
+    /// <summary>该书在书库中的 id（供主窗口在重置进度/移出书架前定位要关闭的阅读窗口）。</summary>
+    public long BookId => _book.Id;
 
     private void SetSlider(double fraction)
     {
@@ -1273,14 +1516,37 @@ public partial class ReaderWindow : Window
     private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
     {
         // 先保存（含模式/缩放），再标记关闭，避免 SaveNow 被提前拦截
-        SaveNow();
+        try { SaveNow(); } catch (Exception ex) { Log.Error("关闭时保存进度失败", ex); }
         _closed = true;
         _saveTimer.Stop();
-        _autoScrollTimer?.Stop();
+        // _rebuildTimer 此前完全没停：关闭后 tick 仍会访问已销毁的控件
+        _rebuildTimer?.Stop();
+        _rebuildTimer = null;
+        StopAutoScrollCore();
         _hideBarsTimer?.Stop();
+        _hideBarsTimer = null;
         _pageLoadCts?.Cancel();
+        // 关窗后把本书的解码页从共享缓存里清掉，否则多本大书开过之后缓存塞满已关书的页，
+        // 下一本书首读会全程 LRU 抖动。
+        try
+        {
+            if (_loader is not null) App.SharedCache.Clear(_loader.SourcePath);
+        }
+        catch (Exception ex)
+        {
+            Log.Error("清理图片缓存失败", ex);
+        }
         try { _loader?.Dispose(); } catch { }
         try { _epubZip?.Dispose(); } catch { }
+    }
+
+    /// <summary>停止自动滚动，并且不再通过再次触发 Toggle 的 Checked/Unchecked 来重入。</summary>
+    private void StopAutoScrollCore()
+    {
+        _autoScrollTimer?.Stop();
+        _autoScrollTimer = null;
+        if (AutoScrollToggle is not null && AutoScrollToggle.IsChecked == true)
+            AutoScrollToggle.IsChecked = false;
     }
 
     private void Back_Click(object sender, RoutedEventArgs e) => Close();
@@ -1371,10 +1637,12 @@ public partial class ReaderWindow : Window
                 e.Handled = true;
                 break;
             case Key.Left:
+                if (IsKeyboardInputFocused()) break;   // 交给当前输入/列表控件自己处理
                 NavigateHorizontal(isLeftKey: true);
                 e.Handled = true;
                 break;
             case Key.Right:
+                if (IsKeyboardInputFocused()) break;
                 NavigateHorizontal(isLeftKey: false);
                 e.Handled = true;
                 break;

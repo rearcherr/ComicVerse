@@ -50,10 +50,8 @@ public sealed class SevenZipComicSource : IComicSource
         lock (_readLock)
         {
             using var s = _entries[index].OpenEntryStream();
-            var ms = new MemoryStream();
-            s.CopyTo(ms);
-            ms.Position = 0;
-            return ms;
+            // 解压后的体积以 PageReadGuard 的上限为准，防御压缩炸弹
+            return PageReadGuard.ReadToEnd(s);
         }
     }
 

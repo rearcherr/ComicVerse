@@ -87,15 +87,37 @@ public partial class SettingsWindow : Window
 
     private void RegisterAssoc_Click(object sender, RoutedEventArgs e)
     {
+        string exts = string.Join(" / ", FileAssociations.Extensions);
+        var confirm = MessageBox.Show(
+            $"将把以下扩展名在本用户下的默认打开方式设为 ComicVerse：\n\n{exts}\n\n" +
+            "此操作只修改当前用户（HKEY_CURRENT_USER），可随时用「取消文件关联」还原。\n是否继续？",
+            "注册文件关联",
+            MessageBoxButton.OKCancel,
+            MessageBoxImage.Question);
+        if (confirm != MessageBoxResult.OK) return;
+
         try
         {
             string exe = Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "ComicVerse.exe");
             FileAssociations.Register(exe);
-            HintText.Text = "已注册 .cbz/.cbr/.cbt/.cb7/.pdf/.txt/.epub 文件关联，双击即可用 ComicVerse 打开。";
+            HintText.Text = $"已注册 {exts} 文件关联，双击即可用 ComicVerse 打开。";
         }
         catch (Exception ex)
         {
             HintText.Text = "注册失败：" + ex.Message;
+        }
+    }
+
+    private void UnregisterAssoc_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            FileAssociations.Unregister();
+            HintText.Text = "已取消文件关联，相关扩展名已恢复系统默认打开方式。";
+        }
+        catch (Exception ex)
+        {
+            HintText.Text = "取消关联失败：" + ex.Message;
         }
     }
 }

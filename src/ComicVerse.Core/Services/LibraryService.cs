@@ -10,6 +10,8 @@ namespace ComicVerse.Core.Services;
 public sealed class LibraryService : IDisposable
 {
     private readonly SqliteConnection _conn;
+    /// <summary>当前 schema 版本（PRAGMA user_version），用于一次性迁移。</summary>
+    private const int SchemaVersion = 2;
 
     public string DbPath { get; }
     public string CoverDir { get; }
@@ -23,54 +25,58 @@ public sealed class LibraryService : IDisposable
 
         _conn = new SqliteConnection("Data Source=" + dbPath);
         _conn.Open();
-        using var cmd = _conn.CreateCommand();
-        cmd.CommandText = """
-            PRAGMA journal_mode=WAL;
-            PRAGMA busy_timeout=5000;
-            PRAGMA foreign_keys=ON;
-            CREATE TABLE IF NOT EXISTS books (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL,
-                path TEXT NOT NULL,
-                type INTEGER NOT NULL,
-                format INTEGER NOT NULL,
-                size INTEGER NOT NULL DEFAULT 0,
-                fingerprint TEXT NOT NULL DEFAULT '',
-                page_count INTEGER NOT NULL DEFAULT 0,
-                chapter_count INTEGER NOT NULL DEFAULT 0,
-                cover_path TEXT,
-                progress REAL NOT NULL DEFAULT 0,
-                last_read TEXT,
-                added TEXT NOT NULL,
-                error TEXT
-            );
-            CREATE TABLE IF NOT EXISTS progress (
-                book_id INTEGER PRIMARY KEY,
-                page_index INTEGER NOT NULL DEFAULT 0,
-                scroll REAL NOT NULL DEFAULT 0,
-                chapter_index INTEGER NOT NULL DEFAULT 0,
-                mode TEXT NOT NULL DEFAULT '',
-                zoom REAL NOT NULL DEFAULT 0,
-                updated TEXT NOT NULL,
-                FOREIGN KEY(book_id) REFERENCES books(id) ON DELETE CASCADE
-            );
-            CREATE TABLE IF NOT EXISTS bookmarks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                book_id INTEGER NOT NULL,
-                page_index INTEGER NOT NULL DEFAULT 0,
-                chapter_index INTEGER NOT NULL DEFAULT 0,
-                note TEXT NOT NULL DEFAULT '',
-                created TEXT NOT NULL,
-                FOREIGN KEY(book_id) REFERENCES books(id) ON DELETE CASCADE
-            );
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_books_type ON books(type);
-            CREATE INDEX IF NOT EXISTS idx_books_last_read ON books(last_read);
-            """;
-        cmd.ExecuteNonQuery();
+        using (var cmd = _conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                PRAGMA journal_mode=WAL;
+                PRAGMA busy_timeout=5000;
+                PRAGMA foreign_keys=ON;
+                CREATE TABLE IF NOT EXISTS books (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    path TEXT NOT NULL,
+                    type INTEGER NOT NULL,
+                    format INTEGER NOT NULL,
+                    size INTEGER NOT NULL DEFAULT 0,
+                    fingerprint TEXT NOT NULL DEFAULT '',
+                    page_count INTEGER NOT NULL DEFAULT 0,
+                    chapter_count INTEGER NOT NULL DEFAULT 0,
+                    cover_path TEXT,
+                    progress REAL NOT NULL DEFAULT 0,
+                    last_read TEXT,
+                    added TEXT NOT NULL,
+                    error TEXT
+                );
+                CREATE TABLE IF NOT EXISTS progress (
+                    book_id INTEGER PRIMARY KEY,
+                    page_index INTEGER NOT NULL DEFAULT 0,
+                    scroll REAL NOT NULL DEFAULT 0,
+                    chapter_index INTEGER NOT NULL DEFAULT 0,
+                    mode TEXT NOT NULL DEFAULT '',
+                    zoom REAL NOT NULL DEFAULT 0,
+                    updated TEXT NOT NULL,
+                    FOREIGN KEY(book_id) REFERENCES books(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS bookmarks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    book_id INTEGER NOT NULL,
+                    page_index INTEGER NOT NULL DEFAULT 0,
+                    chapter_index INTEGER NOT NULL DEFAULT 0,
+                    note TEXT NOT NULL DEFAULT '',
+                    created TEXT NOT NULL,
+                    FOREIGN KEY(book_id) REFERENCES books(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_books_type ON books(type);
+                CREATE INDEX IF NOT EXISTS idx_books_last_read ON books(last_read);
+                """;
+            cmd.ExecuteNonQuery();
+        }
+
+        MigratePathUniqueIndex();
 
         // 旧库迁移：补充 mode / zoom 列
         foreach (string column in new[] { "mode TEXT NOT NULL DEFAULT ''", "zoom REAL NOT NULL DEFAULT 0" })
@@ -94,6 +100,58 @@ public sealed class LibraryService : IDisposable
         return QueryBooks("WHERE id = $p", new SqliteParameter("$p", id)).FirstOrDefault();
     }
 
+    /// <summary>
+    /// 保证 books.path 唯一：同一路径只应有一条记录。
+    ///
+    /// 关键点：去重**只在旧库升级时执行一次**（PRAGMA user_version &lt; 2），并且只删
+    /// "路径字符串完全相同（NOCASE）"的重复行。绝不能每次启动都删：
+    /// 漫画常见的"第01话"与"第1话"是两条**不同的**路径，NOCASE 分组不会把它们算作重复；
+    /// 但若用户先导入了 A、后又导入了同一路径的更新版本，则保留 id 最大（最新）的那条。
+    /// </summary>
+    private void MigratePathUniqueIndex()
+    {
+        int version = 0;
+        try
+        {
+            using var ver = _conn.CreateCommand();
+            ver.CommandText = "PRAGMA user_version";
+            version = Convert.ToInt32(ver.ExecuteScalar() ?? 0);
+        }
+        catch (Exception ex)
+        {
+            Log.Error("读取 schema 版本失败", ex);
+        }
+
+        try
+        {
+            if (version < 2)
+            {
+                // 一次性清理：只对"完全相同的路径"去重，保留最新一条；
+                // ON DELETE CASCADE 会一并删掉被丢弃行的 progress/bookmark。
+                using var dedupe = _conn.CreateCommand();
+                dedupe.CommandText = """
+                    DELETE FROM books
+                    WHERE id NOT IN (SELECT MAX(id) FROM books GROUP BY path COLLATE NOCASE);
+                    """;
+                dedupe.ExecuteNonQuery();
+                Log.Info("已合并历史重复书库记录（同一路径只保留最新一条）");
+            }
+
+            using var idx = _conn.CreateCommand();
+            idx.CommandText = "CREATE UNIQUE INDEX IF NOT EXISTS idx_books_path ON books(path COLLATE NOCASE);";
+            idx.ExecuteNonQuery();
+
+            using var bump = _conn.CreateCommand();
+            bump.CommandText = $"PRAGMA user_version={SchemaVersion}";
+            bump.ExecuteNonQuery();
+        }
+        catch (Exception ex)
+        {
+            // 迁移失败不应阻止启动：退化为「按路径查找」，只是少一层数据库级保护
+            Log.Error("建立 books.path 唯一索引失败", ex);
+        }
+    }
+
     [MethodImpl(MethodImplOptions.Synchronized)]
     public Book? GetBookByFingerprint(string fingerprint)
     {
@@ -105,6 +163,17 @@ public sealed class LibraryService : IDisposable
     public Book? GetBookByPath(string path)
     {
         return QueryBooks("WHERE path = $p", new SqliteParameter("$p", path)).FirstOrDefault();
+    }
+
+    /// <summary>
+    /// 按路径查找，与 books.path 的唯一索引（COLLATE NOCASE）语义保持一致：
+    /// Windows 路径大小写不敏感，"D:\A.cbz" 与 "d:\a.cbz" 必须被认作同一本书，
+    /// 否则命中唯一索引后 UpsertBook 会找不到"已存在的行"从而把冲突抛给上层。
+    /// </summary>
+    [MethodImpl(MethodImplOptions.Synchronized)]
+    public Book? GetBookByPathNoCase(string path)
+    {
+        return QueryBooks("WHERE path = $p COLLATE NOCASE", new SqliteParameter("$p", path)).FirstOrDefault();
     }
 
     [MethodImpl(MethodImplOptions.Synchronized)]
@@ -173,11 +242,170 @@ public sealed class LibraryService : IDisposable
         cmd.Parameters.AddWithValue("$pr", book.Progress);
         cmd.Parameters.AddWithValue("$lr", book.LastReadTime == default ? DBNull.Value : book.LastReadTime);
         cmd.Parameters.AddWithValue("$er", (object?)book.Error ?? DBNull.Value);
-        cmd.ExecuteNonQuery();
+        try
+        {
+            cmd.ExecuteNonQuery();
+        }
+        catch (SqliteException ex) when (ex.SqliteErrorCode == 19 /* SQLITE_CONSTRAINT */ && book.Id <= 0)
+        {
+            // books.path 有唯一索引：同一路径被两个导入流程（或"双击文件关联 + 拖拽"）同时插入时会撞索引。
+            // 此时不能崩，改为更新已存在的那一条并返回它的 id。
+            // 注意大小写：唯一索引是 NOCASE，"D:\A.CBZ" 与 "d:\a.cbz" 是同一行，必须用 NOCASE 查询才能找到它。
+            var existing = GetBookByPathNoCase(book.FilePath);
+            if (existing is null) throw;   // 不是路径唯一性冲突，交给上层处理
+            Log.Info($"书库中已存在同一路径，改为更新: {book.FilePath}");
+            existing.Title = book.Title;
+            existing.FilePath = book.FilePath;
+            existing.FileSize = book.FileSize;
+            existing.PageCount = book.PageCount;
+            existing.ChapterCount = book.ChapterCount;
+            existing.Fingerprint = book.Fingerprint;
+            existing.Format = book.Format;
+            existing.Error = null;
+            if (!string.IsNullOrEmpty(book.CoverPath)) existing.CoverPath = book.CoverPath;
+            return UpsertBook(existing);   // 递归调用会走 Id>0 的 UPDATE 分支
+        }
 
         if (book.Id > 0) return book.Id;
         cmd.CommandText = "SELECT last_insert_rowid()";
         return (long)cmd.ExecuteScalar()!;
+    }
+
+    /// <summary>把书的源文件标记为"失联"（文件被删除/移动/改名）。</summary>
+    [MethodImpl(MethodImplOptions.Synchronized)]
+    public void MarkMissing(long id, string error = "源文件已不存在，可能被移动、重命名或删除")
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = "UPDATE books SET error=$e WHERE id=$id AND (error IS NULL OR error<>$e)";
+        cmd.Parameters.AddWithValue("$e", error);
+        cmd.Parameters.AddWithValue("$id", id);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>清除"失联"标记（文件回来了，例如插回了移动硬盘）。</summary>
+    [MethodImpl(MethodImplOptions.Synchronized)]
+    public void ClearMissing(long id)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = "UPDATE books SET error=NULL WHERE id=$id AND error=$e";
+        cmd.Parameters.AddWithValue("$id", id);
+        cmd.Parameters.AddWithValue("$e", MissingErrorText);
+        cmd.ExecuteNonQuery();
+    }
+
+    public const string MissingErrorText = "源文件已不存在，可能被移动、重命名或删除";
+
+    /// <summary>
+    /// 轻量校验：把文件/文件夹已不存在的书记为失联、又回来时清掉标记。
+    /// 用一次 UPDATE ... WHERE id IN (...) 批量写入，避免书架刷新时逐本写库。
+    /// 返回本次新发现失联的书的数量。
+    /// </summary>
+    [MethodImpl(MethodImplOptions.Synchronized)]
+    public int EnsureFilesPresent(IEnumerable<Book> books)
+    {
+        var missing = new List<long>();
+        var found = new List<long>();
+        foreach (var b in books)
+        {
+            if (string.IsNullOrWhiteSpace(b.FilePath)) continue;
+            bool exists;
+            try
+            {
+                // 文件夹书 → Directory.Exists；文件书 → File.Exists（对不存在的路径都返回 false，无需区分）
+                exists = File.Exists(b.FilePath) || Directory.Exists(b.FilePath);
+            }
+            catch
+            {
+                exists = true;   // 路径过长/权限异常等：不要误判为失联
+            }
+
+            if (!exists)
+            {
+                missing.Add(b.Id);
+                b.Error = MissingErrorText;
+            }
+            else if (b.Error == MissingErrorText)
+            {
+                found.Add(b.Id);
+                b.Error = null;
+            }
+        }
+
+        if (missing.Count > 0)
+        {
+            RunIdListUpdate("UPDATE books SET error=$e WHERE id IN (", missing, "$e", MissingErrorText);
+            Log.Info($"发现 {missing.Count} 本书的源文件不存在，已在书架标记");
+        }
+        if (found.Count > 0)
+            RunIdListUpdate("UPDATE books SET error=NULL WHERE id IN (", found, null, null);
+        return missing.Count;
+    }
+
+    private void RunIdListUpdate(string prefix, List<long> ids, string? paramName, string? paramValue)
+    {
+        foreach (var chunk in Chunk(ids, 500))
+        {
+            using var cmd = _conn.CreateCommand();
+            var names = new string[chunk.Count];
+            for (int i = 0; i < chunk.Count; i++)
+            {
+                names[i] = "$p" + i;
+                cmd.Parameters.AddWithValue(names[i], chunk[i]);
+            }
+            cmd.CommandText = prefix + string.Join(",", names) + ")";
+            if (paramName is not null) cmd.Parameters.AddWithValue(paramName, paramValue!);
+            try
+            {
+                cmd.ExecuteNonQuery();
+            }
+            catch (Exception ex)
+            {
+                Log.Error("更新失联标记失败", ex);
+                return;
+            }
+        }
+    }
+
+    private static IEnumerable<List<long>> Chunk(List<long> source, int size)
+    {
+        for (int i = 0; i < source.Count; i += size)
+            yield return source.GetRange(i, Math.Min(size, source.Count - i));
+    }
+
+    /// <summary>
+    /// 事务性批量操作：一批导入在同一个事务里提交，中途失败整体回滚，
+    /// 避免"导了一半"的半成品书架；也显著减少 WAL commit 次数。
+    /// 本类型的所有命令共用同一个连接，因此本连接上的语句会自动加入当前事务。
+    /// 返回的句柄 Dispose 时若未 Commit 则回滚。
+    /// </summary>
+    [MethodImpl(MethodImplOptions.Synchronized)]
+    public TransactionScope BeginTransaction() => new(_conn.BeginTransaction());
+
+    public sealed class TransactionScope : IDisposable
+    {
+        private readonly SqliteTransaction? _tx;
+        private bool _committed;
+        public TransactionScope(SqliteTransaction tx) => _tx = tx;
+
+        public void Commit()
+        {
+            if (_committed) return;
+            _tx?.Commit();
+            _committed = true;
+        }
+
+        public void Dispose()
+        {
+            try
+            {
+                if (!_committed) _tx?.Rollback();
+                _tx?.Dispose();
+            }
+            catch
+            {
+                // 回滚失败不应影响主流程（连接关闭时 SQLite 也会自动回滚）
+            }
+        }
     }
 
     [MethodImpl(MethodImplOptions.Synchronized)]
@@ -230,6 +458,22 @@ public sealed class LibraryService : IDisposable
         cmd.Parameters.AddWithValue("$zo", zoom);
         cmd.Parameters.AddWithValue("$up", now.ToString("o", CultureInfo.InvariantCulture));
         cmd.Parameters.AddWithValue("$pr", progress);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// 只重置阅读位置，保留用户选择的阅读模式/缩放。
+    /// （旧实现复用 SaveProgress 的默认参数，会把 mode/zoom 一并清空。）
+    /// </summary>
+    [MethodImpl(MethodImplOptions.Synchronized)]
+    public void ResetProgress(long bookId)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE progress SET page_index=0, scroll=0, chapter_index=0 WHERE book_id=$id;
+            UPDATE books SET progress=0 WHERE id=$id;
+            """;
+        cmd.Parameters.AddWithValue("$id", bookId);
         cmd.ExecuteNonQuery();
     }
 
@@ -287,6 +531,22 @@ public sealed class LibraryService : IDisposable
         return cmd.ExecuteScalar() as string;
     }
 
+    /// <summary>一次性读取全部设置（AppSettingsService 用它建内存缓存，避免每次读设置都查库）。</summary>
+    [MethodImpl(MethodImplOptions.Synchronized)]
+    public Dictionary<string, string> GetSettings()
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = "SELECT key, value FROM settings";
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            if (!r.IsDBNull(0) && !r.IsDBNull(1))
+                result[r.GetString(0)] = r.GetString(1);
+        }
+        return result;
+    }
+
     [MethodImpl(MethodImplOptions.Synchronized)]
     public void SetSetting(string key, string value)
     {
@@ -301,7 +561,13 @@ public sealed class LibraryService : IDisposable
     public void Backup(string? targetPath = null)
     {
         targetPath ??= Path.Combine(Path.GetDirectoryName(DbPath)!, $"library-backup-{DateTime.Now:yyyyMMdd-HHmmss}.db");
-        File.Copy(DbPath, targetPath, overwrite: true);
+        // 不能用 File.Copy：库以 WAL 模式运行，数据在 -wal 里，直接拷主库会得到一个空壳。
+        // VACUUM INTO 在当前连接上生成一致快照，天然包含 WAL 中未 checkpoint 的数据。
+        if (File.Exists(targetPath)) File.Delete(targetPath);
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = "VACUUM INTO $p";
+        cmd.Parameters.AddWithValue("$p", targetPath);
+        cmd.ExecuteNonQuery();
     }
 
     [MethodImpl(MethodImplOptions.Synchronized)]

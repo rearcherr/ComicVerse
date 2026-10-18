@@ -36,6 +36,13 @@
                                             Background="#B3141424" CornerRadius="10" Padding="8,3">
                                         <TextBlock Text="{Binding FormatText}" FontSize="10" Foreground="White"/>
                                     </Border>
+                                    <!-- 源文件丢失/失效的书：明确标出来，否则用户只会反复点开报错却不知道原因 -->
+                                    <Border x:Name="errBadge" Visibility="Collapsed"
+                                            HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8,8,0,0"
+                                            Background="#E4557F" CornerRadius="10" Padding="8,3"
+                                            ToolTip="{Binding Error}">
+                                        <TextBlock Text="文件丢失" FontSize="10" Foreground="White"/>
+                                    </Border>
                                 </Grid>
                                 <StackPanel Grid.Row="1" Margin="10,8,10,8">
                                     <TextBlock Text="{Binding Title}" FontSize="13" FontWeight="SemiBold"
@@ -61,6 +68,9 @@
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
                             </Trigger>
+                            <DataTrigger Binding="{Binding IsError}" Value="True">
+                                <Setter TargetName="errBadge" Property="Visibility" Value="Visible"/>
+                            </DataTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Button.Template>

@@ -14,9 +14,14 @@ namespace ComicVerse.Core.Novel;
 public sealed class EpubParser
 {
     private static readonly Regex TagRegex = new(@"<[^>]*>", RegexOptions.Compiled | RegexOptions.Singleline);
+    // 必须一直匹配到 '>'（含自闭合的 "/>"），否则标签尾部会残留在正文里
     private static readonly Regex ImgRegex = new(
-        @"<img\b[^>]*\bsrc\s*=\s*[""'](?<src>[^""']+)[""']",
+        @"<img\b[^>]*?\bsrc\s*=\s*[""'](?<src>[^""']+)[""'][^>]*>",
         RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
+    private static readonly Regex HeadRegex = new(
+        @"<head\b[^>]*>.*?</head>", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline);
+    private static readonly Regex XmlDeclRegex = new(
+        @"<\?.*?\?>", RegexOptions.Compiled | RegexOptions.Singleline);
 
     public NovelBook Parse(string path)
     {
@@ -42,7 +47,7 @@ public sealed class EpubParser
         {
             string id = (string?)item.Attribute("id") ?? "";
             string href = (string?)item.Attribute("href") ?? "";
-            manifest[id] = baseDir.Length > 0 ? baseDir + "/" + href : href;
+            manifest[id] = Resolve(href, baseDir);
             mediaTypes[id] = (string?)item.Attribute("media-type") ?? "";
         }
 
@@ -71,7 +76,7 @@ public sealed class EpubParser
             if (!mediaType.Contains("html", StringComparison.OrdinalIgnoreCase) && !mediaType.Contains("xml"))
                 continue;
 
-            var entry = zip.GetEntry(href);
+            var entry = FindEntry(zip, href);
             if (entry is null) continue;
 
             string html;
@@ -124,7 +129,7 @@ public sealed class EpubParser
         {
             string src = m.Groups["src"].Value.Trim();
             string entry = Resolve(src, dir);
-            if (zip.GetEntry(entry) is null) return "";
+            if (zip.GetEntry(entry) is null && FindEntry(zip, entry) is null) return "";
             string token = "\u0002IMG" + imagePlaceholders.Count + "\u0003";
             imagePlaceholders.Add((token, entry));
             return token;
@@ -134,6 +139,13 @@ public sealed class EpubParser
         html = Regex.Replace(html, @"</(p|div|h[1-6]|li|tr|section|blockquote|article|header|footer|figure|figcaption)>",
             "\n\n", RegexOptions.IgnoreCase);
         html = Regex.Replace(html, @"<(br|hr)\b[^>]*/?>", "\n", RegexOptions.IgnoreCase);
+
+        // 移除 <head>…</head> 与 XML 声明，避免 <title> 等元数据混入正文
+        html = HeadRegex.Replace(html, "");
+        html = XmlDeclRegex.Replace(html, "");
+
+        // 剥离所有剩余的开始标签（此前完全缺失这一步，导致 <p>/<html> 等原样显示在正文里）
+        html = TagRegex.Replace(html, "");
 
         string text = WebUtility.HtmlDecode(html);
         var lines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
@@ -180,10 +192,44 @@ public sealed class EpubParser
     private static string Resolve(string src, string dir)
     {
         string clean = src.Split('?')[0].Split('#')[0].Trim();
-        if (clean.StartsWith('/'))
-            return clean.TrimStart('/');
-        if (dir.Length > 0)
-            return dir + "/" + clean;
-        return clean;
+        // href 是 URL 编码的（%20 / %E4%B8%AD …），必须先解码再去查 ZipArchive 条目
+        try { clean = Uri.UnescapeDataString(clean); } catch { /* 非法转义保持原样 */ }
+        clean = clean.Replace('\\', '/');
+        // 不能在这里直接返回 TrimStart('/')：'/' 开头的 href 是相对 *包根* 的，
+        // 而 OCF 的“根”就是压缩包根，因此它仍要拼上 OPF 所在目录；
+        // 否则 "/ch0.xhtml" 会解析成 "ch0.xhtml"（包根），找不到 "OEBPS/ch0.xhtml"。
+        clean = clean.TrimStart('/');
+        string combined = dir.Length > 0 ? dir + "/" + clean : clean;
+        return NormalizeZipPath(combined);
+    }
+
+    /// <summary>把 "a/b/../c"、"a/./b" 归一化成 "a/c"、"a/b"；ZipArchive 条目名始终用 '/' 分隔。</summary>
+    private static string NormalizeZipPath(string path)
+    {
+        var parts = new List<string>();
+        foreach (string seg in path.Split('/'))
+        {
+            if (seg.Length == 0 || seg == ".") continue;
+            if (seg == "..")
+            {
+                if (parts.Count > 0) parts.RemoveAt(parts.Count - 1);
+                continue;
+            }
+            parts.Add(seg);
+        }
+        return string.Join('/', parts);
+    }
+
+    /// <summary>精确查找条目；找不到时回退为大小写不敏感匹配（macOS 打包的 EPUB 常见）。</summary>
+    private static ZipArchiveEntry? FindEntry(ZipArchive zip, string name)
+    {
+        var entry = zip.GetEntry(name);
+        if (entry is not null) return entry;
+        foreach (var e in zip.Entries)
+        {
+            if (string.Equals(e.FullName, name, StringComparison.OrdinalIgnoreCase))
+                return e;
+        }
+        return null;
     }
 }

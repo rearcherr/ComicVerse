@@ -31,8 +31,15 @@ jobs:
           "CV_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
           Write-Host "Version = $version"
 
+      # 注意：不要用 `dotnet build ComicVerse.slnx`。
+      # 部分 .NET SDK 版本（实测 10.0.203）在 slnx 同时含 net10.0 与 net10.0-windows(UseWPF)
+      # 项目时会在 Restore 阶段以「0 Warning(s) 0 Error(s)」失败且无诊断，属 SDK/环境缺陷。
+      # 显式构建各 csproj 可绕开该缺陷，失败信息也更明确。
       - name: Build
-        run: dotnet build ComicVerse.slnx -c Release
+        run: |
+          dotnet build src/ComicVerse.Core/ComicVerse.Core.csproj -c Release
+          dotnet build src/ComicVerse.App/ComicVerse.App.csproj -c Release
+          dotnet build tests/ComicVerse.Tests/ComicVerse.Tests.csproj -c Release
 
       - name: Core tests
         run: dotnet run --project tests/ComicVerse.Tests/ComicVerse.Tests.csproj -c Release --no-build
@@ -58,9 +65,47 @@ jobs:
       - name: Package zip
         shell: pwsh
         run: |
-          Copy-Item './docs/使用说明.txt' './publish/使用说明.txt'
-          Compress-Archive -Path './publish/ComicVerse.exe','./publish/使用说明.txt' -DestinationPath "ComicVerse-Portable-$($env:GITHUB_REF_NAME)-win-x64.zip"
-          Get-ChildItem -Filter "ComicVerse-Portable-*" | Select-Object Name, Length
+          # README 承诺「项目自带了样例资源（samples/ 目录）」，因此制品必须带上，
+          # 否则新用户解压后无书可读。docs 说明文件一并带上。
+          $stage = Join-Path $env:RUNNER_TEMP 'cv-stage'
+          if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+          New-Item -ItemType Directory -Path $stage | Out-Null
+
+          Copy-Item './publish/ComicVerse.exe' $stage
+          Copy-Item './docs/使用说明.txt' $stage
+          if (Test-Path './samples') {
+            Copy-Item './samples' $stage -Recurse
+          } else {
+            Write-Error 'samples/ 目录不存在，制品将缺少自带样例'
+            exit 1
+          }
+
+          Get-ChildItem $stage | Select-Object Name, Length
+
+          $zip = "ComicVerse-Portable-$($env:GITHUB_REF_NAME)-win-x64.zip"
+          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -CompressionLevel Optimal
+          Get-ChildItem -Filter 'ComicVerse-Portable-*' | Select-Object Name, Length
+
+      - name: Verify zip contents
+        shell: pwsh
+        run: |
+          $zip = "ComicVerse-Portable-$($env:GITHUB_REF_NAME)-win-x64.zip"
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $entries = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $zip)).Entries
+          $names = $entries | ForEach-Object { $_.FullName }
+          Write-Host "zip 条目数: $($entries.Count)"
+          $names | Sort-Object | Select-Object -First 40 | ForEach-Object { Write-Host "  $_" }
+
+          $hasExe    = $names -contains 'ComicVerse.exe'
+          # Compress-Archive 在 Windows 上写的是反斜杠分隔符（samples\xxx），
+          # 两种分隔符都要匹配，否则 CI 会误判制品校验失败。
+          $hasSamples= @($names | Where-Object { $_ -like 'samples/*' -or $_ -like 'samples\*' }).Count -gt 0
+          $hasDoc    = @($names | Where-Object { $_ -like '*.txt' }).Count -gt 0
+          if (-not $hasExe -or -not $hasSamples -or -not $hasDoc) {
+            Write-Error "制品校验失败: exe=$hasExe samples=$hasSamples doc=$hasDoc"
+            exit 1
+          }
+          Write-Host "制品校验通过：exe=$hasExe samples=$hasSamples doc=$hasDoc"
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2

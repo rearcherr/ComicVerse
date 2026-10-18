@@ -109,7 +109,9 @@ public sealed class TarComicSource : IComicSource
         {
             var entry = _entries[index];
             _fs.Position = entry.HeaderOffset + 512;
-            var ms = new MemoryStream((int)Math.Min(entry.Size, int.MaxValue));
+            // entry.Size 来自不可信的 TAR 头：不能直接当 MemoryStream 容量（会被构造成 GB 级预分配）
+            PageReadGuard.EnsureSize(entry.Size);
+            var ms = new MemoryStream((int)Math.Min(entry.Size, 1 << 20));
             byte[] buffer = new byte[1 << 16];
             long remaining = entry.Size;
             while (remaining > 0)

@@ -99,6 +99,7 @@
                 <Button Style="{StaticResource BaseButton}" Content="打开数据目录" Click="OpenDataDir_Click" Margin="0,0,10,10"/>
                 <Button Style="{StaticResource BaseButton}" Content="备份进度数据库" Click="Backup_Click" Margin="0,0,10,10"/>
                 <Button Style="{StaticResource BaseButton}" Content="注册文件关联（双击打开）" Click="RegisterAssoc_Click" Margin="0,0,10,10"/>
+                <Button Style="{StaticResource BaseButton}" Content="取消文件关联" Click="UnregisterAssoc_Click" Margin="0,0,10,10"/>
             </WrapPanel>
 
             <TextBlock x:Name="HintText" Style="{StaticResource CaptionText}" Margin="0,8,0,0" TextWrapping="Wrap"/>

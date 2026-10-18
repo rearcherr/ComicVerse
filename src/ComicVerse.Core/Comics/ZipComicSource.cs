@@ -50,10 +50,8 @@ public sealed class ZipComicSource : IComicSource
         lock (_readLock)
         {
             using var entryStream = _entries[index].Open();
-            var ms = new MemoryStream();
-            entryStream.CopyTo(ms);
-            ms.Position = 0;
-            return ms;
+            // 声明的 Length 不可信（可被构造成巨大值），交给 PageReadGuard 限流读取
+            return PageReadGuard.ReadToEnd(entryStream, _entries[index].Length);
         }
     }
 
