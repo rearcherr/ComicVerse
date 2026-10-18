@@ -54,13 +54,28 @@ public sealed class ImageCacheService
         var key = (sourceKey, index);
         lock (_lock)
         {
+            long size = Estimate(image);
+            // 单张解码结果本身就超预算（如 4000x6000 扫描图 = 96MB，上限 128MB 时一张就爆）：
+            // 放进缓存会立刻被淘汰，还会把已缓存的相邻页全部挤掉，导致整体抖动。
+            // 这种情况不入缓存，直接交给调用方使用（返回值不受影响）。
+            if (size > _maxBytes)
+            {
+                if (_map.Remove(key, out var stale))
+                {
+                    _bytes -= Estimate(stale);
+                    _lru.Remove(key);
+                }
+                if (_bytes < 0) _bytes = 0;
+                return;
+            }
+
             if (_map.TryGetValue(key, out var old))
             {
                 _bytes -= Estimate(old);
                 _lru.Remove(key);
             }
             _map[key] = image;
-            _bytes += Estimate(image);
+            _bytes += size;
             _lru.AddFirst(key);
             EvictLocked();
         }
@@ -79,6 +94,7 @@ public sealed class ImageCacheService
     /// <summary>只清掉某一本书的缓存（例如关闭阅读器时）。</summary>
     public void Clear(string sourceKey)
     {
+        if (string.IsNullOrEmpty(sourceKey)) return;
         lock (_lock)
         {
             foreach (var key in _map.Keys.Where(k => k.Source == sourceKey).ToList())
@@ -89,6 +105,7 @@ public sealed class ImageCacheService
                     _lru.Remove(key);
                 }
             }
+            if (_bytes < 0) _bytes = 0;
         }
     }
 
@@ -99,13 +116,16 @@ public sealed class ImageCacheService
 
     private void EvictLocked()
     {
-        while (_bytes > _maxBytes && _lru.Count > 1)
+        // 原先的 `_lru.Count > 1` 会让"最后一张"永久驻留：即使它的体积远超预算
+        // （用户把上限调到 128MB，实际占用仍可能到 GB 级）。改为允许清空。
+        while (_bytes > _maxBytes && _lru.Count > 0)
         {
             var last = _lru.Last!.Value;
             _lru.RemoveLast();
             if (_map.Remove(last, out var img))
                 _bytes -= Estimate(img);
         }
+        if (_bytes < 0) _bytes = 0;
     }
 
     private static long Estimate(BitmapSource bmp) =>

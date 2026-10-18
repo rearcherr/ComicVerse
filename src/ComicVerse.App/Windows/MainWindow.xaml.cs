@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
+using ComicVerse.Core;
 using ComicVerse.Core.Models;
 using ComicVerse.Core.Services;
 using Microsoft.Win32;
@@ -65,7 +66,17 @@ public partial class MainWindow : Window
     {
         if (!IsLoaded) return;
         _books.Clear();
-        foreach (var b in App.Library.GetBooks(SearchBox?.Text.Trim() ?? "", _filter, _sort))
+        var list = App.Library.GetBooks(SearchBox?.Text.Trim() ?? "", _filter, _sort);
+        // 轻量校验源文件是否还在：失联的书在书架上标记出来，避免用户反复点开报错却无从判断
+        try
+        {
+            App.Library.EnsureFilesPresent(list);
+        }
+        catch (Exception ex)
+        {
+            Log.Error("校验源文件是否存在失败", ex);
+        }
+        foreach (var b in list)
             _books.Add(b);
         RebuildRows();
         if (ListView.ItemsSource is null) ListView.ItemsSource = _books;
@@ -179,7 +190,9 @@ public partial class MainWindow : Window
         var resetItem = new MenuItem { Header = "重置阅读进度" };
         resetItem.Click += (_, _) =>
         {
-            App.Library.SaveProgress(book.Id, 0, 0, 0, 0);
+            // 只清位置，保留阅读模式/缩放（原先复用 SaveProgress 的默认参数会把它们一并清空）
+            App.Library.ResetProgress(book.Id);
+            CloseReadersFor(book.Id);
             RefreshBooks();
         };
         var openFolderItem = new MenuItem { Header = "打开所在文件夹" };
@@ -192,6 +205,8 @@ public partial class MainWindow : Window
         var removeItem = new MenuItem { Header = "移出书架（不删除文件）" };
         removeItem.Click += (_, _) =>
         {
+            // 先关掉这本书的阅读窗口，否则窗口持有的 _book.Id 会失效、并可能在随后把进度写回
+            CloseReadersFor(book.Id);
             App.Library.RemoveBook(book.Id);
             RefreshBooks();
         };
@@ -204,6 +219,16 @@ public partial class MainWindow : Window
         menu.Items.Add(removeItem);
         menu.IsOpen = true;
         e.Handled = true;
+    }
+
+    /// <summary>关闭所有正在显示该书的阅读窗口（重置进度/移出书架前必须先做，避免残留窗口写回旧状态）。</summary>
+    private void CloseReadersFor(long bookId)
+    {
+        foreach (var w in Application.Current.Windows.OfType<ReaderWindow>().ToList())
+        {
+            if (w.BookId != bookId) continue;
+            try { w.Close(); } catch { /* 关不掉也不阻塞主流程 */ }
+        }
     }
 
     private void OpenReader(Book book, bool fromStart = false)

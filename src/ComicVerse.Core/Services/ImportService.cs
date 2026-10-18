@@ -33,6 +33,9 @@ public sealed class ImportService
         _library = library;
     }
 
+    /// <summary>每多少本提交一次事务（兼顾"半成品书架"与长时间持锁）。</summary>
+    private const int BatchSize = 50;
+
     public async Task<ImportResult> ImportAsync(IEnumerable<string> paths, IProgress<ImportProgress>? progress = null, CancellationToken ct = default)
     {
         var result = new ImportResult();
@@ -55,28 +58,52 @@ public sealed class ImportService
             }
         }
 
-        var reporter = new ImportProgress { Total = work.Count };
-        progress?.Report(reporter);
-        foreach (string item in work)
+        int total = work.Count;
+        int done = 0;
+        // 每次 Report 一个快照：progress 回调在 UI 线程异步执行，复用同一个实例会让状态栏读到"未来的 Done"
+        Report(progress, new ImportProgress { Total = total, Done = 0, Current = "" });
+
+        // 一批导入放在一个事务里：中途取消/崩溃时整批回滚，不会留下"导了一半"的书架。
+        // 每 BatchSize 本提交一次，避免一个几千本的大文件夹长时间持有写锁。
+        var batch = _library.BeginTransaction();
+        int inBatch = 0;
+        try
         {
-            ct.ThrowIfCancellationRequested();
-            reporter.Current = item;
-            reporter.Done++;
-            progress?.Report(reporter);
-            try
+            foreach (string item in work)
             {
-                bool updated = await Task.Run(() => ImportOne(item, result), ct).ConfigureAwait(true);
-                if (updated) result.Updated++;
-                else result.Imported++;
+                ct.ThrowIfCancellationRequested();
+                done++;
+                Report(progress, new ImportProgress { Total = total, Done = done, Current = item });
+                try
+                {
+                    bool updated = await Task.Run(() => ImportOne(item, result), ct).ConfigureAwait(true);
+                    if (updated) result.Updated++;
+                    else result.Imported++;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    Log.Error("导入失败: " + item, ex);
+                    result.Failed.Add(item + " — " + (ex is ComicSourceException or InvalidDataException ? ex.Message : "解析失败，请检查文件是否损坏"));
+                }
+
+                if (++inBatch >= BatchSize)
+                {
+                    batch.Commit();
+                    batch.Dispose();
+                    inBatch = 0;
+                    batch = _library.BeginTransaction();
+                }
             }
-            catch (Exception ex)
-            {
-                Log.Error("导入失败: " + item, ex);
-                result.Failed.Add(item + " — " + (ex is ComicSourceException or InvalidDataException ? ex.Message : "解析失败，请检查文件是否损坏"));
-            }
+            batch.Commit();
+        }
+        finally
+        {
+            batch.Dispose();   // 未 Commit 的话这里回滚
         }
         return result;
     }
+
+    private static void Report(IProgress<ImportProgress>? progress, ImportProgress snapshot) => progress?.Report(snapshot);
 
     private List<string> ExpandFolder(string folder)
     {
@@ -183,19 +210,47 @@ public sealed class ImportService
         book.FileSize = Directory.Exists(path) ? 0 : fi.Length;
         book.Fingerprint = Directory.Exists(path) ? "dir:" + path.ToLowerInvariant() : Fingerprint.Compute(path);
 
-        var existing = _library.GetBookByFingerprint(book.Fingerprint);
-        if (existing is not null)
+        // 1) 同一路径（大小写不敏感，和 books.path 的 NOCASE 唯一索引一致）= 同一本书：
+        //    内容更新了就刷新元数据，重新导入就当作正常更新（不能因为"文件已存在"就当成副本跳过）。
+        var samePath = _library.GetBookByPathNoCase(path);
+        if (samePath is not null)
         {
-            existing.FilePath = path;
-            existing.Title = book.Title;
-            existing.FileSize = book.FileSize;
-            existing.PageCount = book.PageCount;
-            existing.Error = null;
-            _library.UpsertBook(existing);
+            samePath.FilePath = path;
+            samePath.Title = book.Title;
+            samePath.FileSize = book.FileSize;
+            samePath.PageCount = book.PageCount;
+            samePath.Fingerprint = book.Fingerprint;
+            samePath.Format = book.Format;
+            samePath.Error = null;
+            _library.UpsertBook(samePath);
             return true; // updated
         }
 
-        string coverKey = book.Fingerprint[..Math.Min(16, book.Fingerprint.Length)];
+        // 2) 路径不同但内容相同：只有当原路径**确实已经不在了**才认定为"用户移动/改名了文件"，
+        //    把那一行接回来（保留阅读进度）；原路径还在 → 这是用户的另一份副本，跳过，
+        //    绝不改写原书的 FilePath（否则原路径那份在书架里会变得不可达）。
+        var sameContent = _library.GetBookByFingerprint(book.Fingerprint);
+        if (sameContent is not null && !string.IsNullOrEmpty(book.Fingerprint))
+        {
+            bool originalGone = !File.Exists(sameContent.FilePath) && !Directory.Exists(sameContent.FilePath);
+            if (originalGone)
+            {
+                Log.Info($"源文件位置变化，复用已有记录: {sameContent.FilePath} -> {path}");
+                sameContent.FilePath = path;
+                sameContent.Title = book.Title;
+                sameContent.FileSize = book.FileSize;
+                sameContent.PageCount = book.PageCount;
+                sameContent.Format = book.Format;
+                sameContent.Error = null;
+                _library.UpsertBook(sameContent);
+                return true;
+            }
+
+            Log.Info($"跳过重复副本（与书架上已有条目内容相同，原文件仍在）: {path} -> {sameContent.FilePath}");
+            return true; // 计为"已处理"，不算新增
+        }
+
+        string coverKey = CoverKey(book.Fingerprint);
         try
         {
             using var first = source.GetPageStream(0);
@@ -208,6 +263,17 @@ public sealed class ImportService
 
         book.Id = _library.UpsertBook(book);
         return false;
+    }
+
+    /// <summary>
+    /// 由指纹派生安全的封面文件名。不能直接截取指纹原文：
+    /// 文件夹书的指纹是 "dir:&lt;路径&gt;"，前 16 字符对所有文件夹都相同（互相覆盖），
+    /// 且其中含 ':' 在 NTFS 上是非法文件名字符（导致封面永远生成失败）。
+    /// </summary>
+    private static string CoverKey(string fingerprint)
+    {
+        byte[] hash = System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(fingerprint));
+        return Convert.ToHexString(hash)[..24].ToLowerInvariant();
     }
 
     private bool ImportNovel(string file)
@@ -240,20 +306,46 @@ public sealed class ImportService
         };
         book.Fingerprint = Fingerprint.Compute(file);
 
-        var existing = _library.GetBookByFingerprint(book.Fingerprint);
-        if (existing is not null)
+        // 与 SaveComicBook 同一套判定：同路径=更新；内容相同但原路径已不在=移动/改名（接回）；
+        // 内容相同且原路径仍在=副本（跳过，不改写原书 FilePath）。
+        var samePath = _library.GetBookByPathNoCase(file);
+        if (samePath is not null)
         {
-            existing.FilePath = file;
-            existing.Title = book.Title;
-            existing.FileSize = book.FileSize;
-            existing.PageCount = book.PageCount;
-            existing.ChapterCount = book.ChapterCount;
-            existing.Error = null;
-            _library.UpsertBook(existing);
+            samePath.FilePath = file;
+            samePath.Title = book.Title;
+            samePath.FileSize = book.FileSize;
+            samePath.PageCount = book.PageCount;
+            samePath.ChapterCount = book.ChapterCount;
+            samePath.Fingerprint = book.Fingerprint;
+            samePath.Format = book.Format;
+            samePath.Error = null;
+            _library.UpsertBook(samePath);
             return true;
         }
 
-        string coverKey = book.Fingerprint[..Math.Min(16, book.Fingerprint.Length)];
+        var sameContent = _library.GetBookByFingerprint(book.Fingerprint);
+        if (sameContent is not null && !string.IsNullOrEmpty(book.Fingerprint))
+        {
+            bool originalGone = !File.Exists(sameContent.FilePath) && !Directory.Exists(sameContent.FilePath);
+            if (originalGone)
+            {
+                Log.Info($"源文件位置变化，复用已有记录: {sameContent.FilePath} -> {file}");
+                sameContent.FilePath = file;
+                sameContent.Title = book.Title;
+                sameContent.FileSize = book.FileSize;
+                sameContent.PageCount = book.PageCount;
+                sameContent.ChapterCount = book.ChapterCount;
+                sameContent.Format = book.Format;
+                sameContent.Error = null;
+                _library.UpsertBook(sameContent);
+                return true;
+            }
+
+            Log.Info($"跳过重复副本（与书架上已有条目内容相同，原文件仍在）: {file} -> {sameContent.FilePath}");
+            return true;
+        }
+
+        string coverKey = CoverKey(book.Fingerprint);
         book.CoverPath = CoverGenerator.GenerateTextCover(book.Title, ext.ToUpperInvariant(), _library.CoverDir, coverKey);
         book.Id = _library.UpsertBook(book);
         return false;

@@ -16,7 +16,7 @@ public sealed class PdfNativeRenderer : IDisposable
     private static readonly object RenderSync = new();
     private static bool _libraryInitialized;
 
-    private readonly IntPtr _doc;
+    private IntPtr _doc;
 
     public int PageCount { get; }
 
@@ -199,6 +199,8 @@ public sealed class PdfNativeRenderer : IDisposable
             if (_doc != IntPtr.Zero)
             {
                 FPDF_CloseDocument(_doc);
+                // 必须清零：构造失败路径会调用两次 Dispose，不清零就是对已释放句柄二次 Close（native double-free）
+                _doc = IntPtr.Zero;
             }
         }
     }
