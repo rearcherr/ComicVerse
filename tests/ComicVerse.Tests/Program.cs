@@ -8,6 +8,7 @@ using ComicVerse.Core.Comics;
 using ComicVerse.Core.Models;
 using ComicVerse.Core.Novel;
 using ComicVerse.Core.Services;
+using Microsoft.Data.Sqlite;
 
 namespace ComicVerse.Tests;
 
@@ -79,6 +80,8 @@ public static class Program
             Run("漫画加载器缓存", () => TestComicLoader(samples.Cbz));
             Run("跨书缓存隔离", () => TestCacheIsolation(work));
             Run("书库与进度", () => TestLibrary(samples));
+            Run("旧库重复路径迁移", TestLegacyDuplicateMigration);
+            Run("并发导入串行化", () => TestConcurrentImportSingleFlight(samples));
             Run("书库并发访问", () => TestLibraryConcurrency(samples));
             Run("取尺寸只读头部", () => TestSizeProbe(work));
             Run("文件夹导入", () => TestFolderImport(work));
@@ -579,6 +582,109 @@ public static class Program
             }
             Task.WaitAll(tasks.ToArray());
             Assert(errors.Count == 0, "并发访问书库出错: " + string.Join(" | ", errors.Take(3)));
+        }
+        finally
+        {
+            try { File.Delete(db); } catch { }
+            try { File.Delete(db + "-wal"); } catch { }
+            try { File.Delete(db + "-shm"); } catch { }
+        }
+    }
+
+    private static void TestConcurrentImportSingleFlight(Samples samples)
+    {
+        string db = Path.Combine(Path.GetTempPath(), "comicverse-import-" + Guid.NewGuid().ToString("N")[..8] + ".db");
+        try
+        {
+            using var lib = new LibraryService(db);
+            var importer = new ImportService(lib);
+            var first = importer.ImportAsync(new[] { samples.Cbz });
+            var second = importer.ImportAsync(new[] { samples.Tar });
+            Task.WaitAll(first, second);
+            Assert(first.Result.Failed.Count == 0 && second.Result.Failed.Count == 0,
+                "并发导入出现失败: " + string.Join(" | ", first.Result.Failed.Concat(second.Result.Failed)));
+            Assert(lib.GetBooks().Count == 2, "并发导入后的书架数量不正确");
+        }
+        finally
+        {
+            try { File.Delete(db); } catch { }
+            try { File.Delete(db + "-wal"); } catch { }
+            try { File.Delete(db + "-shm"); } catch { }
+        }
+    }
+
+    private static void TestLegacyDuplicateMigration()
+    {
+        string db = Path.Combine(Path.GetTempPath(), "comicverse-migrate-" + Guid.NewGuid().ToString("N")[..8] + ".db");
+        try
+        {
+            using (var conn = new SqliteConnection("Data Source=" + db))
+            {
+                conn.Open();
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = """
+                    CREATE TABLE books (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        title TEXT NOT NULL,
+                        path TEXT NOT NULL,
+                        type INTEGER NOT NULL,
+                        format INTEGER NOT NULL,
+                        size INTEGER NOT NULL DEFAULT 0,
+                        fingerprint TEXT NOT NULL DEFAULT '',
+                        page_count INTEGER NOT NULL DEFAULT 0,
+                        chapter_count INTEGER NOT NULL DEFAULT 0,
+                        cover_path TEXT,
+                        progress REAL NOT NULL DEFAULT 0,
+                        last_read TEXT,
+                        added TEXT NOT NULL,
+                        error TEXT
+                    );
+                    CREATE TABLE progress (
+                        book_id INTEGER PRIMARY KEY,
+                        page_index INTEGER NOT NULL DEFAULT 0,
+                        scroll REAL NOT NULL DEFAULT 0,
+                        chapter_index INTEGER NOT NULL DEFAULT 0,
+                        updated TEXT NOT NULL,
+                        FOREIGN KEY(book_id) REFERENCES books(id) ON DELETE CASCADE
+                    );
+                    CREATE TABLE bookmarks (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        book_id INTEGER NOT NULL,
+                        page_index INTEGER NOT NULL DEFAULT 0,
+                        chapter_index INTEGER NOT NULL DEFAULT 0,
+                        note TEXT NOT NULL DEFAULT '',
+                        created TEXT NOT NULL,
+                        FOREIGN KEY(book_id) REFERENCES books(id) ON DELETE CASCADE
+                    );
+                    INSERT INTO books(id,title,path,type,format,progress,last_read,added)
+                    VALUES
+                        (1,'旧记录','D:\Books\same.cbz',0,0,0.2,'2025-01-01T00:00:00.0000000', '2025-01-01T00:00:00.0000000'),
+                        (2,'新记录','D:\Books\same.cbz',0,0,0.4,'2025-02-01T00:00:00.0000000', '2025-02-01T00:00:00.0000000');
+                    INSERT INTO progress(book_id,page_index,scroll,chapter_index,updated)
+                    VALUES(1,7,0.35,2,'2025-03-01T00:00:00.0000000');
+                    INSERT INTO bookmarks(book_id,page_index,chapter_index,note,created)
+                    VALUES
+                        (1,7,2,'第一条书签','2025-03-01T00:00:00.0000000'),
+                        (2,4,1,'第二条书签','2025-02-01T00:00:00.0000000');
+                    PRAGMA user_version=1;
+                    """;
+                cmd.ExecuteNonQuery();
+            }
+
+            using var lib = new LibraryService(db);
+            var books = lib.GetBooks();
+            Assert(books.Count == 1 && books[0].Id == 2, "重复路径迁移后未保留最新书籍记录");
+            Assert(Math.Abs(books[0].Progress - 0.4) < 0.001, "重复书籍进度被迁移逻辑破坏");
+            var progress = lib.GetProgress(2);
+            Assert(progress is not null && progress.PageIndex == 7 && progress.ChapterIndex == 2
+                   && Math.Abs(progress.ScrollOffset - 0.35) < 0.001, "重复书籍阅读位置未迁移到幸存记录");
+            var bookmarks = lib.GetBookmarks(2);
+            Assert(bookmarks.Count == 2, "重复书籍书签未完整迁移");
+            using var versionCmd = new SqliteConnection("Data Source=" + db);
+            versionCmd.Open();
+            using var cmd2 = versionCmd.CreateCommand();
+            cmd2.CommandText = "PRAGMA user_version";
+            Assert(Convert.ToInt32(cmd2.ExecuteScalar()) == 2, "旧库迁移版本未提交");
         }
         finally
         {

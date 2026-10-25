@@ -27,6 +27,7 @@ public sealed class ImportResult
 public sealed class ImportService
 {
     private readonly LibraryService _library;
+    private readonly SemaphoreSlim _importGate = new(1, 1);
 
     public ImportService(LibraryService library)
     {
@@ -37,6 +38,19 @@ public sealed class ImportService
     private const int BatchSize = 50;
 
     public async Task<ImportResult> ImportAsync(IEnumerable<string> paths, IProgress<ImportProgress>? progress = null, CancellationToken ct = default)
+    {
+        await _importGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            return await ImportCoreAsync(paths, progress, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _importGate.Release();
+        }
+    }
+
+    private async Task<ImportResult> ImportCoreAsync(IEnumerable<string> paths, IProgress<ImportProgress>? progress, CancellationToken ct)
     {
         var result = new ImportResult();
         var list = paths

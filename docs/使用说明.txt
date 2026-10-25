@@ -43,5 +43,5 @@ ComicVerse — 二次元漫画 & 轻小说阅读器（免安装版）
 本软件以《木兰宽松许可证，第 2 版》（Mulan PSL v2）开源，
 许可全文见项目根目录 LICENSE 文件，或访问：
   http://license.coscl.org.cn/MulanPSL2
-v1.0.9（书架选中不再框整行；缩放比例数字正确恢复；修复小说进度保存与浅色主题背景）
+v1.1.0（修复条漫接缝、双页缩放与 RTL 顺序、条漫横向平移、进度恢复；旧库迁移保护进度和书签；新增 PR 构建与冒烟测试门禁）
 · 源码：https://github.com/rearcherr/ComicVerse

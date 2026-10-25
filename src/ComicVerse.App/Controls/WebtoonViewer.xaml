@@ -4,8 +4,9 @@
     <Grid>
         <ScrollViewer x:Name="Scroll"
                       VerticalScrollBarVisibility="Auto"
-                      HorizontalScrollBarVisibility="Disabled"
-                      PanningMode="VerticalOnly"
+                      HorizontalScrollBarVisibility="Auto"
+                      HorizontalContentAlignment="Center"
+                      PanningMode="Both"
                       ScrollChanged="OnScrollChanged"
                       PreviewMouseWheel="OnPreviewMouseWheel"
                       PreviewMouseLeftButtonDown="OnPreviewMouseLeftButtonDown"

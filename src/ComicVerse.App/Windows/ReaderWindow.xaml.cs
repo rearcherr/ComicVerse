@@ -34,6 +34,9 @@ public partial class ReaderWindow : Window
     private int _page;
     private int _spreadStart;
     private bool _doubleWide;
+    private int _doubleLeftIndex = -1;
+    private int _doubleRightIndex = -1;
+    private double _doubleAppliedScale = 1.0;
     private bool _rtl;
     private bool _webtoonInitialized;
     private double _webtoonFraction;
@@ -43,6 +46,7 @@ public partial class ReaderWindow : Window
     private int _novelPendingLastPage = -1;
     private int _novelPage;
     private double _novelScrollFraction;
+    private double? _pendingNovelPageFraction;
     private string _novelSubMode = "paged";
     private readonly Dictionary<int, int> _chapterPages = new();
     private NovelViewSettings _novelSettings = new();
@@ -56,11 +60,14 @@ public partial class ReaderWindow : Window
     private bool _updatingSlider;
     private bool _sliderActive;
     private bool _changingChapter;
+    private bool _interactionReady;
     /// <summary>正在用持久化值给排版控件赋初值：此时控件事件不算"用户改动"，不要触发重排/回写。</summary>
     private bool _loadingNovelUi;
     private bool _barsVisible = true;
     private CancellationTokenSource? _pageLoadCts;
     private long _pageLoadVersion;
+    private CancellationTokenSource? _doubleLoadCts;
+    private long _doubleLoadVersion;
 
     public ReaderWindow(Book book, bool fromStart = false)
     {
@@ -74,6 +81,7 @@ public partial class ReaderWindow : Window
         _rtl = App.Settings.MangaRightToLeft;
         UpdateRtlGlyph();
         ReaderThemeGlyph.Text = ThemeService.Current == "dark" ? "\uE708" : "\uE706";
+        SetInteractionReady(false);
     }
 
     // 自检钩子（仅在 --smoke 模式下使用）
@@ -112,11 +120,19 @@ public partial class ReaderWindow : Window
     internal int WebtoonRenderedLoadedCount => WebtoonView.RenderedWithSourceCount;
     internal int WebtoonBlankStripCount => WebtoonView.RenderedWithoutSourceCount;
     internal double WebtoonScrollOffset => WebtoonView.ScrollOffset;
+    internal double WebtoonHorizontalScrollableWidth => WebtoonView.HorizontalScrollableWidth;
+    internal double WebtoonHorizontalOffset => WebtoonView.HorizontalOffset;
     internal (int First, int Last) WebtoonVisibleRange => (WebtoonView.VisibleFirst, WebtoonView.VisibleLast);
     internal int CurrentPageNumber => _page;
     internal int ComicPageCount => _loader?.PageCount ?? 0;
     /// <summary>双页模式下的当前跨页起始页（相当于"当前游标"）。</summary>
     internal int CurrentSpreadStart => _spreadStart;
+    internal int DoubleLeftPageIndex => _doubleLeftIndex;
+    internal int DoubleRightPageIndex => _doubleRightIndex;
+    internal double DoubleAppliedScale => _doubleAppliedScale;
+    internal void TestZoomIn() => ZoomIn_Click(this, new RoutedEventArgs());
+    internal void TestRefreshDouble() => RenderDoubleSpread();
+    internal void TestScrollWebtoonHorizontal(double offset) => WebtoonView.TestScrollHorizontal(offset);
     internal void TestSetFontSize(double size) => FontSizeSlider.Value = size;
     internal void TestFlushSave() => SaveNow();
     /// <summary>模拟真实拖动进度条：按下 → 连续改值 → 松手跳页。</summary>
@@ -137,7 +153,9 @@ public partial class ReaderWindow : Window
         _fitMode = "custom";
         ZoomSlider.Value = _zoom * 100;
     }
-    internal double CurrentZoom => _mode == "webtoon" ? _zoom : PageScale.ScaleX;
+    internal double CurrentZoom => _mode == "webtoon" ? _zoom
+        : _mode == "double" ? _doubleAppliedScale
+        : PageScale.ScaleX;
     internal string ZoomTextValue => ZoomText.Text;
     private bool _syncingZoom;
     internal int NovelPage => _novelPage;
@@ -230,9 +248,13 @@ public partial class ReaderWindow : Window
                 await InitComicAsync();
             else
                 await InitNovelAsync();
+            if (_closed) return;
+            SetInteractionReady(true);
+            ContentGrid.Focus();
         }
         catch (Exception ex)
         {
+            if (_closed) return;
             Log.Error("阅读器打开失败: " + _book.FilePath, ex);
             ShowError("打开失败：" + ex.Message);
         }
@@ -244,7 +266,13 @@ public partial class ReaderWindow : Window
         LoadingPanel.Visibility = Visibility.Visible;
         LoadingText.Text = "正在打开…";
         string path = _book.FilePath;
-        _source = await Task.Run(() => ComicSourceFactory.Create(path));
+        var source = await Task.Run(() => ComicSourceFactory.Create(path));
+        if (_closed)
+        {
+            source.Dispose();
+            return;
+        }
+        _source = source;
         int prefetch = App.Settings.LowPerformanceMode ? 1 : App.Settings.PrefetchPages;
         _loader = new ComicImageLoader(_source, App.SharedCache, prefetch);
 
@@ -323,10 +351,12 @@ public partial class ReaderWindow : Window
         else
         {
             byte[] bytes = await Task.Run(() => File.ReadAllBytes(_book.FilePath));
+            if (_closed) return;
             var enc = _txtEncoding ?? EncodingDetector.Detect(bytes);
             string text = enc.GetString(bytes);
             _novel = await Task.Run(() => TxtParser.Parse(text, _book.Title));
         }
+        if (_closed) return;
 
         if (_novel!.Chapters.Count == 0)
         {
@@ -377,9 +407,16 @@ public partial class ReaderWindow : Window
 
     private void ShowComicPaged(int index)
     {
+        _doubleLoadCts?.Cancel();
         // 双页用的是 _spreadStart 游标；切回翻页时必须先把它同步给 _page，
         // 否则会跳回进入双页之前的旧位置（读了几十个跨页后点「翻页」直接回到起点附近）。
-        if (_mode == "double")
+        if (_mode == "webtoon")
+        {
+            _page = WebtoonView.CurrentPage;
+            _webtoonFraction = WebtoonView.ScrollFraction;
+            index = _page;
+        }
+        else if (_mode == "double")
         {
             _page = _spreadStart;
             index = _spreadStart;
@@ -388,6 +425,7 @@ public partial class ReaderWindow : Window
         ComicPagedView.Visibility = Visibility.Visible;
         WebtoonView.Visibility = DoubleView.Visibility = NovelView.Visibility = Visibility.Collapsed;
         BookmarkPanel.Visibility = Visibility.Collapsed;
+        UpdateZoomControlsForMode();
         LoadPageAsync(index);
     }
 
@@ -469,17 +507,35 @@ public partial class ReaderWindow : Window
             ApplyFit();
     }
 
-    private void ZoneLeft_Click(object sender, MouseButtonEventArgs e)
+    private void PageScroll_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (_rtl) Next(); else Prev();
+        if (!_interactionReady || IsFromScrollBar(e.OriginalSource as DependencyObject)) return;
+        double width = Math.Max(1, PageScroll.ViewportWidth);
+        double relativeX = e.GetPosition(PageScroll).X / width;
+        if (relativeX < 0.35)
+        {
+            if (_rtl) Next(); else Prev();
+        }
+        else if (relativeX > 0.65)
+        {
+            if (_rtl) Prev(); else Next();
+        }
+        else
+        {
+            ToggleBars();
+        }
+        e.Handled = true;
     }
 
-    private void ZoneRight_Click(object sender, MouseButtonEventArgs e)
+    private static bool IsFromScrollBar(DependencyObject? source)
     {
-        if (_rtl) Prev(); else Next();
+        while (source is not null)
+        {
+            if (source is System.Windows.Controls.Primitives.ScrollBar) return true;
+            source = System.Windows.Media.VisualTreeHelper.GetParent(source);
+        }
+        return false;
     }
-
-    private void ZoneMiddle_Click(object sender, MouseButtonEventArgs e) => ToggleBars();
 
     private void Prev_Click(object sender, RoutedEventArgs e) => Prev();
 
@@ -487,6 +543,7 @@ public partial class ReaderWindow : Window
 
     private void Prev()
     {
+        if (!_interactionReady) return;
         if (_mode == "novel")
         {
             NovelPrev();
@@ -509,6 +566,7 @@ public partial class ReaderWindow : Window
 
     private void Next()
     {
+        if (!_interactionReady) return;
         if (_mode == "novel")
         {
             NovelNext();
@@ -549,7 +607,8 @@ public partial class ReaderWindow : Window
     /// 「排版」面板里就没法用方向键调滑块的焦点/数值，目录也选不中。
     /// </summary>
     private static bool IsKeyboardInputFocused()
-        => Keyboard.FocusedElement is Slider or ComboBox or ComboBoxItem or ListBoxItem or ListBox or System.Windows.Controls.Primitives.TextBoxBase;
+        => Keyboard.FocusedElement is Slider or ComboBox or ComboBoxItem or ListBoxItem or ListBox
+            or System.Windows.Controls.Primitives.TextBoxBase or System.Windows.Controls.Primitives.ButtonBase;
 
     private void UpdateComicInfo()
     {
@@ -568,7 +627,7 @@ public partial class ReaderWindow : Window
             info = $"{_page + 1} / {count}";
         }
         PageInfoText.Text = info;
-        SetSlider((double)(cursor + 1) / Math.Max(1, count));
+        SetSlider(_mode == "webtoon" ? WebtoonView.ScrollFraction : (double)(cursor + 1) / Math.Max(1, count));
     }
 
     #endregion
@@ -577,11 +636,21 @@ public partial class ReaderWindow : Window
 
     private async void ShowWebtoon()
     {
+        _doubleLoadCts?.Cancel();
+        string previousMode = _mode;
+        if (previousMode == "double")
+            _page = _spreadStart;
+        else if (previousMode == "webtoon")
+        {
+            _page = WebtoonView.CurrentPage;
+            _webtoonFraction = WebtoonView.ScrollFraction;
+        }
         _mode = "webtoon";
         _pageLoadCts?.Cancel();
         WebtoonView.Visibility = Visibility.Visible;
         ComicPagedView.Visibility = DoubleView.Visibility = NovelView.Visibility = Visibility.Collapsed;
         BookmarkPanel.Visibility = Visibility.Collapsed;
+        UpdateZoomControlsForMode();
 
         if (!_webtoonInitialized)
         {
@@ -594,7 +663,7 @@ public partial class ReaderWindow : Window
                 // 同时记住在文档里的相对位置：离开条漫再回来、或下次打开时都靠它恢复
                 _webtoonFraction = WebtoonView.ScrollFraction;
                 PageInfoText.Text = $"{idx + 1} / {_loader!.PageCount}";
-                SetSlider((double)(idx + 1 + WebtoonView.ScrollFraction) / _loader.PageCount);
+                SetSlider(WebtoonView.ScrollFraction);
                 ScheduleSave();
             };
             double scale = _zoom;
@@ -617,7 +686,10 @@ public partial class ReaderWindow : Window
             {
                 if (_closed || _mode != "webtoon" || _loader is null || _loader.PageCount == 0) return;
                 WebtoonView.EnsureLayout();
-                WebtoonView.ScrollToPage(Math.Clamp(_page, 0, _loader.PageCount - 1));
+                double target = previousMode == "webtoon"
+                    ? _webtoonFraction
+                    : (double)Math.Clamp(_page, 0, _loader.PageCount - 1) / _loader.PageCount;
+                WebtoonView.ScrollToFraction(target);
                 UpdateComicInfo();
             });
         }
@@ -629,55 +701,126 @@ public partial class ReaderWindow : Window
 
     private void ShowDouble()
     {
+        _doubleLoadCts?.Cancel();
+        if (_mode == "webtoon")
+        {
+            _page = WebtoonView.CurrentPage;
+            _webtoonFraction = WebtoonView.ScrollFraction;
+        }
         _mode = "double";
         _pageLoadCts?.Cancel();
         DoubleView.Visibility = Visibility.Visible;
         ComicPagedView.Visibility = WebtoonView.Visibility = NovelView.Visibility = Visibility.Collapsed;
         BookmarkPanel.Visibility = Visibility.Collapsed;
         _spreadStart = Math.Clamp(_page, 0, _loader!.PageCount - 1);
+        UpdateZoomControlsForMode();
         RenderDoubleSpread();
     }
 
     private async void RenderDoubleSpread()
     {
         if (_loader is null || _closed) return;
+        _doubleLoadCts?.Cancel();
+        var cts = _doubleLoadCts = new CancellationTokenSource();
+        long version = ++_doubleLoadVersion;
         int count = _loader.PageCount;
         _spreadStart = Math.Clamp(_spreadStart, 0, count - 1);
         DoubleLoading.Visibility = Visibility.Visible;
+        DoubleLoadingText.Text = "正在加载…";
         LeftImage.Source = null;
         RightImage.Source = null;
 
-        var dim = await Task.Run(() => _loader.GetPageSize(_spreadStart));
-        _doubleWide = dim is { Width: var w, Height: var h } && w > h;
-        int right = _doubleWide || _spreadStart + 1 >= count ? -1 : _spreadStart + 1;
-        RightScroll.Visibility = right >= 0 ? Visibility.Visible : Visibility.Collapsed;
-
-        var leftBmp = await _loader.GetPageAsync(_spreadStart);
-        if (_closed || _mode != "double") return;
-        LeftImage.Source = leftBmp;
-        FitDoubleImage(LeftImage, leftBmp);
-
-        if (right >= 0)
+        bool IsCurrent() => !_closed && _mode == "double" && version == _doubleLoadVersion
+                            && !cts.IsCancellationRequested;
+        try
         {
-            var rightBmp = await _loader.GetPageAsync(right);
-            if (_closed || _mode != "double") return;
-            RightImage.Source = rightBmp;
-            FitDoubleImage(RightImage, rightBmp);
-        }
+            int spread = _spreadStart;
+            var dim = await Task.Run(() => _loader.GetPageSize(spread), cts.Token);
+            if (!IsCurrent()) return;
+            _doubleWide = dim is { Width: var w, Height: var h } && w > h;
+            int second = _doubleWide || spread + 1 >= count ? -1 : spread + 1;
+            // 日漫跨页从右向左展开：先读到的页在右侧，后一页在左侧。
+            int leftIndex = _rtl && second >= 0 ? second : spread;
+            int rightIndex = _rtl && second >= 0 ? spread : second;
+            RightScroll.Visibility = rightIndex >= 0 ? Visibility.Visible : Visibility.Collapsed;
 
-        DoubleLoading.Visibility = Visibility.Collapsed;
-        UpdateZoomText(_zoom);
-        _loader.Prefetch(_spreadStart);
-        UpdateComicInfo();
-        ScheduleSave();
+            var leftBmp = await _loader.GetPageAsync(leftIndex, cts.Token);
+            if (!IsCurrent()) return;
+            LeftImage.Source = leftBmp;
+            _doubleLeftIndex = leftIndex;
+            _doubleRightIndex = -1;
+            ApplyDoubleFit();
+
+            if (rightIndex >= 0)
+            {
+                var rightBmp = await _loader.GetPageAsync(rightIndex, cts.Token);
+                if (!IsCurrent()) return;
+                RightImage.Source = rightBmp;
+                _doubleRightIndex = rightIndex;
+                ApplyDoubleFit();
+            }
+
+            if (LeftImage.Source is null || (rightIndex >= 0 && RightImage.Source is null))
+            {
+                DoubleLoadingText.Text = "部分页面加载失败";
+                return;
+            }
+            DoubleLoading.Visibility = Visibility.Collapsed;
+            _loader.Prefetch(spread);
+            UpdateComicInfo();
+            ScheduleSave();
+        }
+        catch (OperationCanceledException)
+        {
+            // 更快的翻页、模式切换或关窗已经取代本次渲染
+        }
+        catch (Exception ex)
+        {
+            if (IsCurrent())
+            {
+                Log.Error("加载双页失败", ex);
+                DoubleLoadingText.Text = "加载失败";
+            }
+        }
+        finally
+        {
+            if (ReferenceEquals(_doubleLoadCts, cts))
+                _doubleLoadCts = null;
+            cts.Dispose();
+        }
     }
 
-    private void FitDoubleImage(Image image, System.Windows.Media.Imaging.BitmapSource? bmp)
+    private void ApplyDoubleFit()
     {
-        if (bmp is null) return;
-        double targetW = image.Parent is ScrollViewer sv ? Math.Max(50, sv.ViewportWidth) : 800;
-        image.Width = targetW * _zoom;
-        image.Height = bmp.PixelHeight * (image.Width / Math.Max(1, bmp.PixelWidth));
+        double leftScale = ApplyDoubleFit(LeftImage);
+        double rightScale = ApplyDoubleFit(RightImage);
+        _doubleAppliedScale = leftScale > 0 ? leftScale : rightScale > 0 ? rightScale : _zoom;
+        UpdateZoomText(_doubleAppliedScale);
+    }
+
+    private double ApplyDoubleFit(Image image)
+    {
+        if (image.Source is not System.Windows.Media.Imaging.BitmapSource bmp) return 0;
+        double viewportWidth = image.Parent is ScrollViewer sv ? Math.Max(50, sv.ViewportWidth) : 800;
+        double viewportHeight = image.Parent is ScrollViewer sh ? Math.Max(50, sh.ViewportHeight) : 700;
+        double widthScale = viewportWidth / Math.Max(1, bmp.PixelWidth);
+        double scale = _fitMode switch
+        {
+            "page" => Math.Min(widthScale, viewportHeight / Math.Max(1, bmp.PixelHeight)),
+            "actual" => 1.0,
+            "custom" => _zoom,
+            _ => widthScale
+        };
+        scale = Math.Clamp(scale, 0.05, 8.0);
+        image.Width = bmp.PixelWidth * scale;
+        image.Height = bmp.PixelHeight * scale;
+        return scale;
+    }
+
+    private void DoubleView_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (IsLoaded && _mode == "double" && (LeftImage.Source is not null || RightImage.Source is not null))
+            ApplyDoubleFit();
     }
 
     #endregion
@@ -687,35 +830,38 @@ public partial class ReaderWindow : Window
     private void FitWidth_Click(object sender, RoutedEventArgs e)
     {
         _fitMode = "width";
-        ApplyFit();
+        if (_mode == "webtoon") _zoom = 1.0;
+        ApplyComicFit();
     }
 
     private void FitPage_Click(object sender, RoutedEventArgs e)
     {
         _fitMode = "page";
-        ApplyFit();
+        ApplyComicFit();
     }
 
     private void Actual_Click(object sender, RoutedEventArgs e)
     {
         _fitMode = "actual";
-        ApplyFit();
+        ApplyComicFit();
     }
 
     private void ZoomIn_Click(object sender, RoutedEventArgs e)
     {
-        _zoom = Math.Clamp(_zoom * 1.25, 0.2, 3.0);
+        double basis = _fitMode == "custom" ? _zoom : CurrentVisibleScale;
+        _zoom = Math.Clamp(basis * 1.25, 0.2, 3.0);
         _fitMode = "custom";
-        ZoomSlider.Value = _zoom * 100;
-        ApplyFit();
+        SyncZoomSlider();
+        ApplyComicFit();
     }
 
     private void ZoomOut_Click(object sender, RoutedEventArgs e)
     {
-        _zoom = Math.Clamp(_zoom / 1.25, 0.2, 3.0);
+        double basis = _fitMode == "custom" ? _zoom : CurrentVisibleScale;
+        _zoom = Math.Clamp(basis / 1.25, 0.2, 3.0);
         _fitMode = "custom";
-        ZoomSlider.Value = _zoom * 100;
-        ApplyFit();
+        SyncZoomSlider();
+        ApplyComicFit();
     }
 
     private void ZoomSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -724,15 +870,7 @@ public partial class ReaderWindow : Window
         if (!IsLoaded) return;
         _zoom = Math.Clamp(e.NewValue / 100.0, 0.2, 3.0);
         _fitMode = "custom";
-        if (_mode == "webtoon")
-        {
-            WebtoonView.ScaleFactor = _zoom;
-            UpdateZoomText(_zoom);
-        }
-        else
-        {
-            ApplyFit();
-        }
+        ApplyComicFit();
     }
 
     private void OnWebtoonScaleChanged(double scale)
@@ -754,11 +892,62 @@ public partial class ReaderWindow : Window
 
     private void UpdateZoomText(double scale) => ZoomText.Text = (scale * 100).ToString("0") + "%";
 
+    private double CurrentVisibleScale
+    {
+        get
+        {
+            if (_mode == "webtoon") return _zoom;
+            if (_mode == "double") return _doubleAppliedScale;
+            return PageImage.Source is null ? _zoom : PageScale.ScaleX;
+        }
+    }
+
+    private void SyncZoomSlider()
+    {
+        _syncingZoom = true;
+        try
+        {
+            ZoomSlider.Value = _zoom * 100;
+        }
+        finally
+        {
+            _syncingZoom = false;
+        }
+    }
+
+    private void ApplyComicFit()
+    {
+        if (_mode == "webtoon")
+        {
+            WebtoonView.ScaleFactor = _zoom;
+            UpdateZoomText(_zoom);
+        }
+        else if (_mode == "double")
+        {
+            ApplyDoubleFit();
+        }
+        else
+        {
+            ApplyFit();
+        }
+    }
+
+    private void UpdateZoomControlsForMode()
+    {
+        bool comic = _mode is "paged" or "double" or "webtoon";
+        if (!comic) return;
+        FitWidthButton.Visibility = Visibility.Visible;
+        FitPageButton.Visibility = _mode == "webtoon" ? Visibility.Collapsed : Visibility.Visible;
+        ActualButton.Visibility = _mode == "webtoon" ? Visibility.Collapsed : Visibility.Visible;
+    }
+
     private void Rtl_Click(object sender, RoutedEventArgs e)
     {
         _rtl = !_rtl;
         App.Settings.MangaRightToLeft = _rtl;
         UpdateRtlGlyph();
+        if (_mode == "double")
+            RenderDoubleSpread();
     }
 
     private void UpdateRtlGlyph()
@@ -791,6 +980,7 @@ public partial class ReaderWindow : Window
         {
             _novelPage = 0;
             _novelScrollFraction = 0;
+            _pendingNovelPageFraction = null;
         }
 
         _changingChapter = true;
@@ -811,7 +1001,13 @@ public partial class ReaderWindow : Window
                 _novelPendingLastPage = -1;
                 _novelPage = Math.Max(0, pages - 1);   // 回退到上一章时停在末页
             }
-            NovelPaged.GoToPage(Math.Clamp(_novelPage, 0, pages - 1));
+            else if (_pendingNovelPageFraction is double pageFraction)
+            {
+                _pendingNovelPageFraction = null;
+                _novelPage = (int)Math.Round(Math.Clamp(pageFraction, 0, 1) * Math.Max(0, pages - 1));
+            }
+            _novelPage = Math.Clamp(_novelPage, 0, pages - 1);
+            NovelPaged.GoToPage(_novelPage);
             if (_novelSubMode == "scroll")
             {
                 var sv = VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll);
@@ -865,6 +1061,7 @@ public partial class ReaderWindow : Window
             {
                 if (_closed) return;
                 int pages = _chapterPages.GetValueOrDefault(_novelChapter, 1);
+                _novelPage = Math.Clamp(_novelPage, 0, Math.Max(0, pages - 1));
                 NovelPaged.GoToPage(Math.Clamp(_novelPage, 0, pages - 1));
                 UpdateNovelInfo();
             });
@@ -911,8 +1108,7 @@ public partial class ReaderWindow : Window
     private void NovelMode_Changed(object sender, RoutedEventArgs e)
     {
         if (!IsLoaded) return;
-        if (NovelModeScroll.IsChecked == true) _novelSubMode = "scroll";
-        else _novelSubMode = "paged";
+        _novelSubMode = NovelModeScroll.IsChecked == true ? "scroll" : "paged";
         ApplyNovelSubMode();
         ScheduleSave();
     }
@@ -1409,7 +1605,8 @@ public partial class ReaderWindow : Window
                 page = WebtoonView.CurrentPage;
                 _page = page;
                 _webtoonFraction = scroll;
-                percent = Math.Clamp((double)(page + scroll + 1) / _loader.PageCount, 0, 1);
+                // ScrollFraction 已经是整本条漫的进度；再叠加页码会重复计算并提前显示 100%。
+                percent = Math.Clamp(scroll, 0, 1);
             }
             else
             {
@@ -1426,7 +1623,8 @@ public partial class ReaderWindow : Window
         string mode = _mode == "novel" ? "novel:" + _novelSubMode : _mode;
         double zoom = 0;
         if (_mode == "webtoon") zoom = _zoom;
-        else if (_mode is "paged" or "double") zoom = Math.Round(PageScale.ScaleX, 3);
+        else if (_mode == "double") zoom = Math.Round(_doubleAppliedScale, 3);
+        else if (_mode == "paged") zoom = Math.Round(PageScale.ScaleX, 3);
 
         try
         {
@@ -1481,12 +1679,27 @@ public partial class ReaderWindow : Window
         double fraction = ProgressSlider.Value / 1000.0;
         if (_mode == "novel")
         {
-            int chapter = (int)(fraction * _novel!.Chapters.Count);
-            if (chapter != _novelChapter) LoadNovelChapter(chapter);
-            else if (_novelSubMode == "paged")
+            int count = _novel!.Chapters.Count;
+            int chapter = Math.Clamp((int)(fraction * count), 0, count - 1);
+            double withinChapter = Math.Clamp(fraction * count - chapter, 0, 1);
+            _novelScrollFraction = withinChapter;
+            if (chapter != _novelChapter)
+            {
+                if (_novelSubMode == "paged")
+                    _pendingNovelPageFraction = withinChapter;
+                LoadNovelChapter(chapter, resetPosition: false);
+            }
+            else if (_novelSubMode == "scroll")
+            {
+                var sv = VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll);
+                if (sv is not null)
+                    sv.ScrollToVerticalOffset(withinChapter * Math.Max(0, sv.ScrollableHeight));
+                UpdateNovelInfo();
+            }
+            else
             {
                 int pages = _chapterPages.GetValueOrDefault(_novelChapter, 1);
-                _novelPage = Math.Clamp((int)(fraction * _novel.Chapters.Count * pages - _novelChapter * pages), 0, pages - 1);
+                _novelPage = (int)Math.Round(withinChapter * Math.Max(0, pages - 1));
                 NovelPaged.GoToPage(_novelPage);
                 UpdateNovelInfo();
             }
@@ -1498,7 +1711,9 @@ public partial class ReaderWindow : Window
             if (_mode == "webtoon")
             {
                 _page = target;
-                WebtoonView.ScrollToPage(target);
+                _webtoonFraction = fraction;
+                WebtoonView.ScrollToFraction(fraction);
+                UpdateComicInfo();
             }
             else if (_mode == "double")
             {
@@ -1526,6 +1741,7 @@ public partial class ReaderWindow : Window
         _hideBarsTimer?.Stop();
         _hideBarsTimer = null;
         _pageLoadCts?.Cancel();
+        _doubleLoadCts?.Cancel();
         // 关窗后把本书的解码页从共享缓存里清掉，否则多本大书开过之后缓存塞满已关书的页，
         // 下一本书首读会全程 LRU 抖动。
         try
@@ -1600,6 +1816,10 @@ public partial class ReaderWindow : Window
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (!_interactionReady && e.Key != Key.Escape) return;
+        bool inputFocused = IsKeyboardInputFocused();
+        if (inputFocused && e.Key is not (Key.Escape or Key.Left or Key.Right)) return;
+
         switch (e.Key)
         {
             case Key.Escape:
@@ -1654,9 +1874,15 @@ public partial class ReaderWindow : Window
                 e.Handled = true;
                 break;
             case Key.End:
-                if (_mode == "webtoon") WebtoonView.ScrollToPage(_loader!.PageCount - 1);
+                if (_mode == "webtoon") WebtoonView.ScrollToFraction(1);
                 else if (_mode == "double") { _spreadStart = _loader!.PageCount - 1; RenderDoubleSpread(); }
-                else if (_mode == "novel") LoadNovelChapter(_novel!.Chapters.Count - 1);
+                else if (_mode == "novel")
+                {
+                    int last = _novel!.Chapters.Count - 1;
+                    _novelPendingLastPage = last;
+                    _novelScrollFraction = 1;
+                    LoadNovelChapter(last, resetPosition: false);
+                }
                 else LoadPageAsync(_loader!.PageCount - 1);
                 e.Handled = true;
                 break;
@@ -1697,9 +1923,20 @@ public partial class ReaderWindow : Window
 
     private void ShowError(string message)
     {
+        SetInteractionReady(false);
         ComicPagedView.Visibility = WebtoonView.Visibility = DoubleView.Visibility = NovelView.Visibility = Visibility.Collapsed;
         ErrorPanel.Visibility = Visibility.Visible;
         ErrorText.Text = message;
+    }
+
+    private void SetInteractionReady(bool ready)
+    {
+        _interactionReady = ready;
+        ModePaged.IsEnabled = ModeWebtoon.IsEnabled = ModeDouble.IsEnabled = ready;
+        RtlButton.IsEnabled = ready;
+        PrevButton.IsEnabled = NextButton.IsEnabled = ready;
+        BookmarkButton.IsEnabled = ready;
+        ProgressSlider.IsEnabled = ready;
     }
 
     private void ProgressSlider_PreviewMouseDown(object sender, MouseButtonEventArgs e)

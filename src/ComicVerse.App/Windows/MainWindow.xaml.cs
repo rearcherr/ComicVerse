@@ -235,6 +235,21 @@ public partial class MainWindow : Window
     {
         try
         {
+            var existing = Application.Current.Windows.OfType<ReaderWindow>()
+                .FirstOrDefault(w => w.BookId == book.Id);
+            if (existing is not null)
+            {
+                if (!fromStart)
+                {
+                    if (existing.WindowState == WindowState.Minimized)
+                        existing.WindowState = WindowState.Normal;
+                    existing.Activate();
+                    existing.Focus();
+                    return;
+                }
+                existing.Close();
+            }
+
             var reader = new ReaderWindow(book, fromStart) { Owner = this };
             reader.Closed += (_, _) => RefreshBooks();
             reader.Show();

@@ -6,6 +6,8 @@ namespace ComicVerse.App.Windows;
 
 public partial class SettingsWindow : Window
 {
+    private bool _loading;
+
     public SettingsWindow()
     {
         InitializeComponent();
@@ -14,8 +16,16 @@ public partial class SettingsWindow : Window
 
     private void LoadValues()
     {
-        if (App.Settings.Theme == "light") LightRadio.IsChecked = true;
-        else DarkRadio.IsChecked = true;
+        _loading = true;
+        try
+        {
+            if (App.Settings.Theme == "light") LightRadio.IsChecked = true;
+            else DarkRadio.IsChecked = true;
+        }
+        finally
+        {
+            _loading = false;
+        }
 
         CacheSlider.Value = App.Settings.CacheLimitMb;
         CacheText.Text = $"当前 {App.Settings.CacheLimitMb} MB（解码页面的内存上限）";
@@ -29,6 +39,14 @@ public partial class SettingsWindow : Window
             case "double": DefaultDoubleRadio.IsChecked = true; break;
             default: DefaultWebtoonRadio.IsChecked = true; break;
         }
+    }
+
+    private void Theme_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading || !IsLoaded) return;
+        string theme = LightRadio.IsChecked == true ? "light" : "dark";
+        App.Settings.Theme = theme;
+        ThemeService.Apply(theme);
     }
 
     private void CacheSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)

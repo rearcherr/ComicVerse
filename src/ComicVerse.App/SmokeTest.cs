@@ -5,6 +5,8 @@ using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using ComicVerse.App.Controls;
+using ComicVerse.App.Helpers;
 using ComicVerse.App.Windows;
 using ComicVerse.Core;
 using ComicVerse.Core.Models;
@@ -76,6 +78,10 @@ public static class SmokeTest
         bool farJumpOk = false;
         bool webtoonFarJumpOk = false;
         bool webtoonDragOk = false;
+        bool webtoonHorizontalPanOk = false;
+        bool webtoonProgressOk = false;
+        bool webtoonModeReentryOk = false;
+        double webtoonHorizontalScrollableWidth = -1;
         int webtoonSeamRows = -1;
         bool webtoonArrowOk = false;
         string webtoonArrowDetail = "";
@@ -101,6 +107,11 @@ public static class SmokeTest
         string novelArrowDetail = "";
         bool doubleToPagedOk = false;
         string doubleToPagedDetail = "";
+        bool doubleZoomOk = false;
+        bool doubleRtlOrderOk = false;
+        bool doubleZoomRestored = false;
+        double doubleZoomSaved = -1;
+        string doubleRtlDetail = "";
         bool novelScrollRestored = false;
         string novelScrollRestoreDetail = "";
         bool novelScrollSkipped = false;
@@ -119,7 +130,6 @@ public static class SmokeTest
         string longNovelReopenProbe = "";
         string longNovelSaveProbe = "";
         string longNovelScrollRestoreDetail = "";
-        string novelSectionError = "";
         string novelRestoreDetail = "";
         bool novelFontSizeKept = false;
         bool novelFontSizeLeaked = false;
@@ -178,6 +188,15 @@ public static class SmokeTest
                 reader.TestWebtoonScrollBy(1600);
                 await Task.Delay(900);
                 webtoonScrollOk = reader.IsWebtoonReady && reader.WebtoonRenderedCount > 0;
+                // 放大条漫后必须能横向查看被裁掉的左右边缘
+                reader.TestSetZoom(2.0);
+                await Task.Delay(700);
+                webtoonHorizontalScrollableWidth = reader.WebtoonHorizontalScrollableWidth;
+                reader.TestScrollWebtoonHorizontal(100);
+                await Task.Delay(150);
+                webtoonHorizontalPanOk = webtoonHorizontalScrollableWidth > 10 && reader.WebtoonHorizontalOffset > 1;
+                reader.TestSetZoom(1.0);
+                await Task.Delay(500);
                 // 模拟拖动进度条：连续快速跳到靠后页，再落到末页
                 int last = reader.WebtoonPageCount - 1;
                 for (int i = 4; i >= 0; i--)
@@ -211,6 +230,16 @@ public static class SmokeTest
                     $"RTL=1 第 {arrowStartPage + 1} 页(偏移 {arrowStartOffset:F0}) → 右键到第 {arrowRightPage + 1} 页({arrowRightOffset:F0}) → 左键回第 {arrowLeftPage + 1} 页({arrowLeftOffset:F0})";
                 App.Settings.MangaRightToLeft = false;
                 reader.TestSetRtl(false);
+                reader.TestFlushSave();
+                double webtoonProgress = App.Library.GetBook(comic.Id)?.Progress ?? -1;
+                webtoonProgressOk = webtoonProgress is > 0.2 and < 0.85;
+
+                int reentryPage = reader.CurrentPageNumber;
+                reader.TestSwitchToPaged();
+                await Task.Delay(500);
+                reader.TestSwitchToWebtoon();
+                await Task.Delay(1000);
+                webtoonModeReentryOk = Math.Abs(reader.CurrentPageNumber - reentryPage) <= 1;
                 // 鼠标左键拖拽滑动：向下拖 180px，滚动偏移应同步上移约 180px
                 double beforeDrag = reader.WebtoonScrollOffset;
                 reader.TestWebtoonDragDown(180);
@@ -246,6 +275,22 @@ public static class SmokeTest
                 await Task.Delay(1400);
                 doubleOk = reader.IsDoubleReady;
                 Capture(reader, Path.Combine(outDir, "reader-double.png"));
+                double beforeDoubleZoom = reader.DoubleAppliedScale;
+                reader.TestZoomIn();
+                await Task.Delay(300);
+                doubleZoomOk = reader.DoubleAppliedScale > beforeDoubleZoom + 0.01;
+
+                // RTL 双页应把后一页放到左侧、起始页放到右侧
+                int rtlsStart = reader.CurrentSpreadStart;
+                reader.TestSetRtl(true);
+                reader.TestRefreshDouble();
+                await Task.Delay(900);
+                doubleRtlOrderOk = reader.DoubleRightPageIndex == rtlsStart
+                                   && reader.DoubleLeftPageIndex == rtlsStart + 1;
+                doubleRtlDetail = $"起始页 {rtlsStart + 1}，左 {reader.DoubleLeftPageIndex + 1}，右 {reader.DoubleRightPageIndex + 1}";
+                reader.TestSetRtl(false);
+                reader.TestRefreshDouble();
+                await Task.Delay(900);
 
                 // 双页 → 翻页：游标必须跟着走，不能跳回进双页之前的旧页（旧的 _page）
                 int spreadBeforeSwitch = reader.CurrentSpreadStart;
@@ -262,6 +307,12 @@ public static class SmokeTest
                 doubleToPagedDetail =
                     $"双页起点 {spreadBeforeSwitch + 1} → 前进到 {spreadAfterForward + 1} → 切回翻页落在第 {pageAfterBack + 1} 页";
                 Capture(reader, Path.Combine(outDir, "reader-double-to-paged.png"));
+                reader.TestSwitchToDouble();
+                await Task.Delay(900);
+                reader.TestSetZoom(1.4);
+                await Task.Delay(400);
+                reader.TestFlushSave();
+                doubleZoomSaved = reader.DoubleAppliedScale;
             }
             catch (Exception ex)
             {
@@ -271,6 +322,12 @@ public static class SmokeTest
             reader.Close();
             closeSw.Stop();
             closeSeconds = closeSw.Elapsed.TotalSeconds;
+
+            var doubleReader = new ReaderWindow(comic) { ShowInTaskbar = false };
+            doubleReader.Show();
+            await Task.Delay(1600);
+            doubleZoomRestored = doubleReader.IsDoubleReady && Math.Abs(doubleReader.CurrentZoom - doubleZoomSaved) < 0.05;
+            doubleReader.Close();
 
             // 默认阅读方式应为条漫：新建阅读器直接进入条漫
             defaultModeOk = App.Settings.DefaultComicMode == "webtoon";
@@ -629,6 +686,8 @@ public static class SmokeTest
             $"缩放同步: 比例数字={zoomTextSyncOk}\n" +
             $"小说: 翻页进度={novelProgressOk} 滚动接章={novelScrollChapterOk} 浅色背景={novelLightThemeOk} 恢复进度={novelRestoreOk} — {novelRestoreDetail}\n" +
             $"双页→翻页游标: {doubleToPagedOk} — {doubleToPagedDetail}\n" +
+            $"双页缩放: {doubleZoomOk} | RTL 左右页: {doubleRtlOrderOk} — {doubleRtlDetail}\n" +
+            $"双页缩放重启恢复: {doubleZoomRestored}（保存 {doubleZoomSaved:F2}）\n" +
             $"小说子模式持久化: {novelScrollRestored} — {novelScrollRestoreDetail}\n" +
             $"长篇多章滚动恢复: {longNovelScrollRestoredOk} — {longNovelScrollRestoreDetail}\n" +
             $"排版字号: 修改后保留={novelFontSizeKept} 未污染全局默认={!novelFontSizeLeaked}\n" +
@@ -639,6 +698,8 @@ public static class SmokeTest
             $"导入后书架立即刷新: {shelfRefreshOk}\n" +
             $"条漫页间接缝检测（背景色行数）: {webtoonSeamRows}\n" +
             $"条漫鼠标拖拽滑动: {webtoonDragOk}\n" +
+            $"条漫放大后横向平移: {webtoonHorizontalPanOk}（可滚动宽度 {webtoonHorizontalScrollableWidth:F0}px）\n" +
+            $"条漫进度比例: {webtoonProgressOk} | 切出再回位置: {webtoonModeReentryOk}\n" +
             $"条漫方向键（← 上一页 / → 下一页）: {webtoonArrowOk} — {webtoonArrowDetail}\n" +
             (longPdfOpenSeconds >= 0 ? $"200 页 PDF: 打开耗时 {longPdfOpenSeconds:F1}s，最大停顿 {longPdfStallMs:F0}ms\n" : "") +
             (tallPdf.Length > 0 ? $"超长 PDF 条漫切换: {tallWebtoonOk}（耗时 {tallWebtoonSeconds:F1}s，页数 {readerWebtoonPages}）\n" : "") +
@@ -656,12 +717,16 @@ public static class SmokeTest
         return comic is not null && novel is not null && comicReaderOk && pagingOk && farJumpOk &&
                lightHeaderOk && shelfRefreshOk && webtoonSeamRows == 0 &&
                webtoonDragOk &&
+               webtoonHorizontalPanOk &&
+               webtoonProgressOk && webtoonModeReentryOk &&
                webtoonArrowOk &&
                webtoonOk && webtoonScrollOk && webtoonFarJumpOk &&
                sliderDragOk &&
                doubleOk && novelReaderOk && pdfReaderOk && tallOk && closeOk && stallOk && defaultModeOk && defaultOpensWebtoon &&
                modePersisted && zoomPersisted && zoomTextSyncOk && zoomTextRestored &&
                doubleToPagedOk && novelScrollRestored && novelFontSizeKept && !novelFontSizeLeaked &&
+               doubleZoomOk && doubleRtlOrderOk &&
+               doubleZoomRestored &&
                novelProgressOk && novelScrollChapterOk && novelLightThemeOk && novelRestoreOk && novelArrowOk ? 0 : 1;
     }
 
@@ -715,9 +780,14 @@ public static class SmokeTest
         var buf = new byte[stride * h];
         rtb.CopyPixels(buf, stride, 0);
         var bg = (window.TryFindResource("ReaderBgBrush") as SolidColorBrush)?.Color ?? Colors.Black;
-        int x = w / 2;
+        var viewer = VisualTreeHelpers.FindVisualChild<WebtoonViewer>(window);
+        if (viewer is null || viewer.ActualWidth < 1 || viewer.ActualHeight < 1) return -1;
+        var viewerTopLeft = viewer.TranslatePoint(new Point(0, 0), window);
+        int x = Math.Clamp((int)(viewerTopLeft.X + viewer.ActualWidth / 2), 1, w - 2);
+        int yStart = Math.Clamp((int)viewerTopLeft.Y + 4, 0, h - 1);
+        int yEnd = Math.Clamp((int)(viewerTopLeft.Y + viewer.ActualHeight) - 4, yStart, h);
         int bad = 0;
-        for (int y = (int)(h * 0.12); y < (int)(h * 0.9); y++)
+        for (int y = yStart; y < yEnd; y++)
         {
             int i = y * stride + x * 4;
             int diff = Math.Abs(buf[i] - bg.B) + Math.Abs(buf[i + 1] - bg.G) + Math.Abs(buf[i + 2] - bg.R);

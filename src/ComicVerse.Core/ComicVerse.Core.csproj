@@ -9,10 +9,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.13" />
     <PackageReference Include="SharpCompress" Version="0.50.3" />
     <PackageReference Include="bblanchon.PDFium.Win32" Version="153.0.7988" />
-    <EmbeddedResource Include="$(NuGetPackageRoot)bblanchon.pdfium.win32\153.0.7988\runtimes\win-x64\native\pdfium.dll"
+    <EmbeddedResource Include="$([System.IO.Path]::Combine('$(NuGetPackageRoot)', 'bblanchon.pdfium.win32', '153.0.7988', 'runtimes', 'win-x64', 'native', 'pdfium.dll'))"
                       LogicalName="pdfium.dll" />
   </ItemGroup>
 

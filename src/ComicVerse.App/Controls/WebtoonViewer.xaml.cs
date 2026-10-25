@@ -34,7 +34,9 @@ public partial class WebtoonViewer : UserControl
     private bool _dragPressed;   // 已按下左键（还没超过起步阈值）
     private bool _dragging;      // 正在拖拽
     private double _dragStartY;
+    private double _dragStartX;
     private double _dragStartOffset;
+    private double _dragStartHorizontalOffset;
 
     public event Action<int>? CurrentPageChanged;
     public event Action? LayoutReady;
@@ -69,6 +71,11 @@ public partial class WebtoonViewer : UserControl
     internal int VisibleFirst => _visibleFirst;
     internal int VisibleLast => _visibleLast;
     internal double ScrollOffset => Scroll.VerticalOffset;
+    internal double HorizontalOffset => Scroll.HorizontalOffset;
+    internal double HorizontalScrollableWidth => Scroll.ScrollableWidth;
+
+    internal void TestScrollHorizontal(double offset) =>
+        Scroll.ScrollToHorizontalOffset(Math.Clamp(offset, 0, Math.Max(0, Scroll.ScrollableWidth)));
 
     internal void EnsureLayout()
     {
@@ -146,7 +153,10 @@ public partial class WebtoonViewer : UserControl
         _dragPressed = true;
         _dragging = false;
         _dragStartY = e.GetPosition(this).Y;
+        _dragStartX = e.GetPosition(this).X;
         _dragStartOffset = Scroll.VerticalOffset;
+        _dragStartHorizontalOffset = Scroll.HorizontalOffset;
+        CaptureMouse();
     }
 
     private void OnPreviewMouseMove(object sender, MouseEventArgs e)
@@ -157,7 +167,8 @@ public partial class WebtoonViewer : UserControl
             EndDrag();
             return;
         }
-        double y = e.GetPosition(this).Y;
+        var position = e.GetPosition(this);
+        double y = position.Y;
         if (!_dragging)
         {
             _dragging = true;
@@ -165,6 +176,8 @@ public partial class WebtoonViewer : UserControl
         }
         CancelSmoothScroll();       // 抓住内容时停止滚轮遗留的滑动
         Scroll.ScrollToVerticalOffset(_dragStartOffset - (y - _dragStartY));
+        if (Scroll.ScrollableWidth > 0.5)
+            Scroll.ScrollToHorizontalOffset(_dragStartHorizontalOffset - (position.X - _dragStartX));
         e.Handled = true;
     }
 
@@ -184,6 +197,7 @@ public partial class WebtoonViewer : UserControl
         _dragPressed = false;
         _dragging = false;
         Cursor = Cursors.Arrow;
+        if (IsMouseCaptured) ReleaseMouseCapture();
     }
 
     private static bool IsFromScrollBar(DependencyObject? src)
@@ -204,7 +218,9 @@ public partial class WebtoonViewer : UserControl
         _dragPressed = true;
         _dragging = true;
         _dragStartY = 300;
+        _dragStartX = 0;
         _dragStartOffset = Scroll.VerticalOffset;
+        _dragStartHorizontalOffset = Scroll.HorizontalOffset;
         for (int i = 1; i <= steps; i++)
             Scroll.ScrollToVerticalOffset(_dragStartOffset - dy * i / steps);
         EndDrag();
@@ -355,17 +371,18 @@ public partial class WebtoonViewer : UserControl
                     StartLoad(i, existing, version);
                 continue;
             }
+            double imageTop = Math.Floor(_tops[i]);
+            double imageBottom = i + 1 < _tops.Count ? Math.Floor(_tops[i + 1]) : Math.Ceiling(_total);
             var img = new Image
             {
                 Width = RootCanvas.Width,
-                // 用「下一页顶部 - 本页顶部」精确定高，并额外多铺 1px：
-                // 相邻页交界处的高度是小数，抗锯齿会在缝里透出背景，看起来就是一条细白线
-                Height = Math.Max(1, (i + 1 < _tops.Count ? _tops[i + 1] : _total) - _tops[i]) + 1,
+                // 位置和高度都按整像素排布，并让相邻页重叠 1 DIP，避免高分屏缩放后露出背景细缝。
+                Height = Math.Max(1, imageBottom - imageTop + 1),
                 Stretch = System.Windows.Media.Stretch.Fill
             };
             System.Windows.Media.RenderOptions.SetEdgeMode(img, System.Windows.Media.EdgeMode.Aliased);
             System.Windows.Media.RenderOptions.SetBitmapScalingMode(img, System.Windows.Media.BitmapScalingMode.HighQuality);
-            Canvas.SetTop(img, _tops[i]);
+            Canvas.SetTop(img, imageTop);
             RootCanvas.Children.Add(img);
             _rendered[i] = img;
             StartLoad(i, img, version);

@@ -76,8 +76,6 @@ public sealed class LibraryService : IDisposable
             cmd.ExecuteNonQuery();
         }
 
-        MigratePathUniqueIndex();
-
         // 旧库迁移：补充 mode / zoom 列
         foreach (string column in new[] { "mode TEXT NOT NULL DEFAULT ''", "zoom REAL NOT NULL DEFAULT 0" })
         {
@@ -92,6 +90,8 @@ public sealed class LibraryService : IDisposable
                 // 列已存在则忽略
             }
         }
+
+        MigratePathUniqueIndex();
     }
 
     [MethodImpl(MethodImplOptions.Synchronized)]
@@ -124,31 +124,129 @@ public sealed class LibraryService : IDisposable
 
         try
         {
-            if (version < 2)
+            using var tx = _conn.BeginTransaction();
+            bool hasDuplicates = HasDuplicatePaths(tx);
+            if (hasDuplicates)
             {
-                // 一次性清理：只对"完全相同的路径"去重，保留最新一条；
-                // ON DELETE CASCADE 会一并删掉被丢弃行的 progress/bookmark。
-                using var dedupe = _conn.CreateCommand();
-                dedupe.CommandText = """
-                    DELETE FROM books
-                    WHERE id NOT IN (SELECT MAX(id) FROM books GROUP BY path COLLATE NOCASE);
-                    """;
-                dedupe.ExecuteNonQuery();
-                Log.Info("已合并历史重复书库记录（同一路径只保留最新一条）");
+                MergeDuplicatePaths(tx);
+                Log.Info("已合并重复路径的历史书库记录，并迁移进度与书签");
             }
 
             using var idx = _conn.CreateCommand();
+            idx.Transaction = tx;
             idx.CommandText = "CREATE UNIQUE INDEX IF NOT EXISTS idx_books_path ON books(path COLLATE NOCASE);";
             idx.ExecuteNonQuery();
 
             using var bump = _conn.CreateCommand();
+            bump.Transaction = tx;
             bump.CommandText = $"PRAGMA user_version={SchemaVersion}";
             bump.ExecuteNonQuery();
+            tx.Commit();
         }
         catch (Exception ex)
         {
             // 迁移失败不应阻止启动：退化为「按路径查找」，只是少一层数据库级保护
             Log.Error("建立 books.path 唯一索引失败", ex);
+        }
+    }
+
+    private bool HasDuplicatePaths(SqliteTransaction tx)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            SELECT EXISTS(
+                SELECT 1 FROM books
+                GROUP BY path COLLATE NOCASE
+                HAVING COUNT(*) > 1
+            );
+            """;
+        return Convert.ToInt32(cmd.ExecuteScalar() ?? 0) != 0;
+    }
+
+    private void MergeDuplicatePaths(SqliteTransaction tx)
+    {
+        var paths = new List<string>();
+        using (var cmd = _conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                SELECT path FROM books
+                GROUP BY path COLLATE NOCASE
+                HAVING COUNT(*) > 1;
+                """;
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read()) paths.Add(reader.GetString(0));
+        }
+
+        foreach (string path in paths)
+        {
+            var ids = new List<long>();
+            using (var cmd = _conn.CreateCommand())
+            {
+                cmd.Transaction = tx;
+                cmd.CommandText = "SELECT id FROM books WHERE path=$path COLLATE NOCASE ORDER BY id";
+                cmd.Parameters.AddWithValue("$path", path);
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read()) ids.Add(reader.GetInt64(0));
+            }
+            if (ids.Count < 2) continue;
+
+            long survivor = ids[^1];
+            long? progressSource = null;
+            using (var cmd = _conn.CreateCommand())
+            {
+                cmd.Transaction = tx;
+                cmd.CommandText = $"""
+                    SELECT book_id FROM progress
+                    WHERE book_id IN ({string.Join(",", ids)})
+                    ORDER BY updated DESC, book_id DESC
+                    LIMIT 1;
+                    """;
+                var value = cmd.ExecuteScalar();
+                if (value is not null && value != DBNull.Value) progressSource = Convert.ToInt64(value);
+            }
+
+            if (progressSource is long source && source != survivor)
+            {
+                using var cmd = _conn.CreateCommand();
+                cmd.Transaction = tx;
+                cmd.CommandText = """
+                    INSERT INTO progress(book_id, page_index, scroll, chapter_index, mode, zoom, updated)
+                    SELECT $survivor, page_index, scroll, chapter_index, mode, zoom, updated
+                    FROM progress WHERE book_id=$source
+                    ON CONFLICT(book_id) DO UPDATE SET
+                        page_index=excluded.page_index,
+                        scroll=excluded.scroll,
+                        chapter_index=excluded.chapter_index,
+                        mode=excluded.mode,
+                        zoom=excluded.zoom,
+                        updated=excluded.updated;
+                    """;
+                cmd.Parameters.AddWithValue("$survivor", survivor);
+                cmd.Parameters.AddWithValue("$source", source);
+                cmd.ExecuteNonQuery();
+            }
+
+            string idList = string.Join(",", ids);
+            using (var cmd = _conn.CreateCommand())
+            {
+                cmd.Transaction = tx;
+                cmd.CommandText = $"UPDATE bookmarks SET book_id=$survivor WHERE book_id IN ({idList})";
+                cmd.Parameters.AddWithValue("$survivor", survivor);
+                cmd.ExecuteNonQuery();
+
+                cmd.CommandText = $"""
+                    UPDATE books
+                    SET progress=(SELECT MAX(progress) FROM books WHERE id IN ({idList})),
+                        last_read=(SELECT MAX(last_read) FROM books WHERE id IN ({idList}))
+                    WHERE id=$survivor;
+                    """;
+                cmd.ExecuteNonQuery();
+
+                cmd.CommandText = $"DELETE FROM books WHERE id IN ({idList}) AND id<>$survivor";
+                cmd.ExecuteNonQuery();
+            }
         }
     }
 

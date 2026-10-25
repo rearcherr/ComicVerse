@@ -19,8 +19,10 @@
                 </Grid.ColumnDefinitions>
                 <TextBlock Text="主题" Style="{StaticResource BodyText}" VerticalAlignment="Center"/>
                 <StackPanel Grid.Column="1" Orientation="Horizontal">
-                    <RadioButton x:Name="DarkRadio" Style="{StaticResource SegmentRadio}" Content="深色" GroupName="Theme" Margin="0,0,8,0"/>
-                    <RadioButton x:Name="LightRadio" Style="{StaticResource SegmentRadio}" Content="浅色" GroupName="Theme"/>
+                    <RadioButton x:Name="DarkRadio" Style="{StaticResource SegmentRadio}" Content="深色" GroupName="Theme"
+                                 Checked="Theme_Changed" Margin="0,0,8,0"/>
+                    <RadioButton x:Name="LightRadio" Style="{StaticResource SegmentRadio}" Content="浅色" GroupName="Theme"
+                                 Checked="Theme_Changed"/>
                 </StackPanel>
             </Grid>
 
