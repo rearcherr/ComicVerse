@@ -14,7 +14,7 @@ using ComicVerse.Core.Models;
 namespace ComicVerse.App;
 
 /// <summary>无人工参与的启动冒烟测试：导入样例 → 打开漫画/小说阅读器 → 截图并断言。</summary>
-public static class SmokeTest
+public static partial class SmokeTest
 {
     public static async Task<int> RunAsync(string[] args)
     {
@@ -664,6 +664,9 @@ public static class SmokeTest
         }
 
         shortNovelCompleteOk = await CheckShortNovelCompletionAsync(outDir);
+        var novelPreferences = longNovelBook is null
+            ? (Formatting: false, Wheel: false, Detail: "缺少长篇小说样例")
+            : await CheckNovelPreferencesAsync(longNovelBook);
 
         // PDF 单独导入并打开（单文件发布时 pdfium.dll 需可被加载）
         string pdfPath = Directory.GetFiles(samplesDir, "*.pdf", SearchOption.AllDirectories).FirstOrDefault() ?? "";
@@ -771,6 +774,7 @@ public static class SmokeTest
             $"书架改进: 空库提示={shelfEmptyOk} 阅读状态与继续阅读={shelfChecks.State} 搜索/筛选无结果提示={shelfChecks.Empty} 打开时重置进度={shelfChecks.Reset}\n" +
             $"小说实际分页与章末接章: {novelActualPagingOk}（{novelActualPagingDetail}） | 章内滚动自动保存: {novelScrollAutosaveOk}\n" +
             $"短篇小说一屏读完（翻页/滚动）: {shortNovelCompleteOk}\n" +
+            $"小说排版重开恢复: {novelPreferences.Formatting} | 滚轮速度与跨章: {novelPreferences.Wheel} — {novelPreferences.Detail}\n" +
             $"不等高漫画翻页切条漫保持页码: {unequalWebtoonOk}\n" +
             $"条漫页间接缝检测（背景色行数）: {webtoonSeamRows}\n" +
             $"条漫鼠标拖拽滑动: {webtoonDragOk}\n" +
@@ -795,6 +799,7 @@ public static class SmokeTest
                shelfEmptyOk && shelfChecks.State && shelfChecks.Empty && shelfChecks.Reset &&
                novelActualPagingOk && novelScrollAutosaveOk &&
                shortNovelCompleteOk &&
+               novelPreferences.Formatting && novelPreferences.Wheel &&
                unequalWebtoonOk &&
                lightHeaderOk && shelfRefreshOk && webtoonSeamRows == 0 &&
                webtoonDragOk && webtoonClickReleaseOk &&

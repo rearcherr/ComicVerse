@@ -86,6 +86,7 @@ public static class Program
             Run("取消导入保留阅读数据及已导入书籍", () => TestImportCancellationPreservesReadingData(work, samples));
             Run("刷新元数据保留新阅读进度", () => TestMetadataRefreshPreservesReadingData(work));
             Run("重置进度恢复未读状态", () => TestResetProgressUnread(work));
+            Run("小说按书排版持久化与隔离", () => TestNovelSettingsPerBookPersistence(work));
             Run("书库并发访问", () => TestLibraryConcurrency(samples));
             Run("取尺寸只读头部", () => TestSizeProbe(work));
             Run("文件夹导入", () => TestFolderImport(work));
@@ -784,6 +785,78 @@ public static class Program
             "重置阅读位置未归零或误清除了阅读模式/缩放");
         Assert(reopened.GetRecent().All(b => b.Id != id) && reopened.GetBookmarks(id).Count == 1,
             "重置后仍出现在最近阅读中或误删了书签");
+    }
+
+    private static void AssertNovelSettingsEqual(NovelViewSettings actual, NovelViewSettings expected, string message)
+    {
+        Assert(actual.FontFamily == expected.FontFamily && actual.FontSize == expected.FontSize
+               && actual.LineSpacing == expected.LineSpacing && actual.ParagraphSpacing == expected.ParagraphSpacing
+               && actual.PageMargin == expected.PageMargin && actual.TextColor == expected.TextColor
+               && actual.Background == expected.Background, message);
+    }
+
+    private static void TestNovelSettingsPerBookPersistence(string work)
+    {
+        string db = Path.Combine(work, "novel-settings-per-book.db");
+        long bookA, bookB, bookC;
+        var defaults = new NovelViewSettings
+        {
+            FontFamily = "Arial", FontSize = 20, LineSpacing = 1.6, ParagraphSpacing = 9,
+            PageMargin = 58, TextColor = "#101010", Background = "#FEFEFE"
+        };
+        var formatA = new NovelViewSettings
+        {
+            FontFamily = "SimSun", FontSize = 26, LineSpacing = 2.1, ParagraphSpacing = 12,
+            PageMargin = 92, TextColor = "#112233", Background = "#FFEECC"
+        };
+        var formatB = new NovelViewSettings
+        {
+            FontFamily = "Microsoft JhengHei UI", FontSize = 16, LineSpacing = 1.4, ParagraphSpacing = 4,
+            PageMargin = 32, TextColor = "#445566", Background = "#FFFFFF"
+        };
+
+        using (var lib = new LibraryService(db))
+        {
+            bookA = lib.UpsertBook(new Book { Title = "小说 A", FilePath = Path.Combine(work, "novel-a.txt"), Type = BookType.Novel, Format = BookFormat.Txt });
+            bookB = lib.UpsertBook(new Book { Title = "小说 B", FilePath = Path.Combine(work, "novel-b.epub"), Type = BookType.Novel, Format = BookFormat.Epub });
+            bookC = lib.UpsertBook(new Book { Title = "未设排版小说", FilePath = Path.Combine(work, "novel-c.txt"), Type = BookType.Novel, Format = BookFormat.Txt });
+            var settings = new AppSettingsService(lib);
+            AssertNovelSettingsEqual(settings.GetNovelSettingsForBook(bookC), new NovelViewSettings(),
+                "没有任何排版配置时未使用内置默认值");
+            settings.NovelSettings = defaults;
+            var inputA = formatA.Clone();
+            settings.SaveNovelSettingsForBook(bookA, inputA);
+            settings.SaveNovelSettingsForBook(bookB, formatB);
+            inputA.FontSize = 31; // 调用方之后修改对象，不能改变已经保存的本书快照。
+            AssertNovelSettingsEqual(settings.GetNovelSettingsForBook(bookA), formatA, "保存后修改输入对象污染了本书排版");
+            AssertNovelSettingsEqual(settings.NovelSettings, defaults, "按书保存污染了全局排版默认值");
+        }
+
+        // 完整重建数据库连接及设置服务，验证的是落盘恢复而不是同一实例的内存缓存。
+        using (var reopened = new LibraryService(db))
+        {
+            var settings = new AppSettingsService(reopened);
+            AssertNovelSettingsEqual(settings.GetNovelSettingsForBook(bookA), formatA, "重建服务后 A 小说排版字段未完整恢复");
+            AssertNovelSettingsEqual(settings.GetNovelSettingsForBook(bookB), formatB, "B 小说排版被 A 污染或未完整恢复");
+            AssertNovelSettingsEqual(settings.GetNovelSettingsForBook(bookC), defaults, "没有按书排版时未回退全局默认");
+            AssertNovelSettingsEqual(settings.NovelSettings, defaults, "重建服务后全局默认被按书设置污染");
+            var detached = settings.GetNovelSettingsForBook(bookA);
+            detached.FontSize = 13;
+            AssertNovelSettingsEqual(settings.GetNovelSettingsForBook(bookA), formatA, "修改读取结果改变了持久化排版");
+            var fallback = settings.GetNovelSettingsForBook(bookC);
+            fallback.FontSize = 30;
+            AssertNovelSettingsEqual(settings.GetNovelSettingsForBook(bookC), defaults, "回退返回了共享可变默认对象");
+        }
+
+        foreach (string damaged in new[] { "{", "{\"FontSize\":\"not-a-number\"}", "null", "", "   " })
+        {
+            using (var writer = new LibraryService(db))
+                writer.SetSetting("novel_settings_book_" + bookA.ToString(System.Globalization.CultureInfo.InvariantCulture), damaged);
+            using var reopened = new LibraryService(db);
+            var settings = new AppSettingsService(reopened);
+            AssertNovelSettingsEqual(settings.GetNovelSettingsForBook(bookA), defaults, "损坏或空的按书 JSON 未安全回退全局默认");
+            AssertNovelSettingsEqual(settings.GetNovelSettingsForBook(bookB), formatB, "A 小说排版损坏影响了 B 小说");
+        }
     }
 
     private static void TestLegacyDuplicateMigration()

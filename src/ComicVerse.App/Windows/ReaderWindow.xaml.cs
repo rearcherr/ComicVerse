@@ -57,6 +57,8 @@ public partial class ReaderWindow : Window
     private int _novelPaginationVersion;
     private bool _novelPageLayoutPending;
     private NovelViewSettings _novelSettings = new();
+    private bool _novelSettingsLoaded;
+    private bool _novelSettingsDirty;
     private Encoding? _txtEncoding;
 
     private readonly DispatcherTimer _saveTimer;
@@ -250,6 +252,24 @@ public partial class ReaderWindow : Window
         return true;
     }
     internal double FontSizeSetting => _novelSettings.FontSize;
+    internal NovelViewSettings NovelFormattingSnapshot => _novelSettings.Clone();
+    internal double NovelDocumentMargin => ((NovelPaged.Document ?? NovelScroll.Document) as FlowDocument)?.PagePadding.Left ?? double.NaN;
+    internal double NovelDocumentFontSize => ((NovelPaged.Document ?? NovelScroll.Document) as FlowDocument)?.FontSize ?? double.NaN;
+    internal string? NovelDocumentFontFamily => ((NovelPaged.Document ?? NovelScroll.Document) as FlowDocument)?.FontFamily.Source;
+    internal IReadOnlyList<string> NovelFontChoices => (FontCombo.ItemsSource as IEnumerable<string>)?.ToArray() ?? [];
+    internal void TestSetNovelFormatting(NovelViewSettings settings)
+    {
+        FontCombo.SelectedItem = (FontCombo.ItemsSource as IEnumerable<string>)?.FirstOrDefault(
+            f => string.Equals(f, settings.FontFamily, StringComparison.OrdinalIgnoreCase))
+            ?? FontCombo.SelectedItem;
+        FontSizeSlider.Value = settings.FontSize;
+        LineSpacingSlider.Value = settings.LineSpacing;
+        ParagraphSpacingSlider.Value = settings.ParagraphSpacing;
+        MarginSlider.Value = settings.PageMargin;
+        SelectComboByTag(TextColorCombo, settings.TextColor);
+        SelectComboByTag(BgColorCombo, settings.Background);
+    }
+    internal void TestSetNovelMargin(double margin) => MarginSlider.Value = margin;
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
@@ -385,7 +405,7 @@ public partial class ReaderWindow : Window
             return;
         }
 
-        _novelSettings = App.Settings.NovelSettings.Clone();
+        _novelSettings = App.Settings.GetNovelSettingsForBook(_book.Id);
         // 持久化的排版设置没有任何范围校验：JSON 里出现 null/"" 的颜色会让 NovelDocumentBuilder
         // 抛 NullReferenceException/FormatException（整本小说打不开），越界的字号也会炸。
         // NovelDocumentBuilder 属于 Core（别人在改），所以在这里做兜底校验。
@@ -393,6 +413,7 @@ public partial class ReaderWindow : Window
         ChapterList.ItemsSource = _novel.Chapters.Select((c, i) => $"{i + 1}. {c.Title}").ToList();
         LoadNovelSettingsUi();
         ApplyThemeToNovelSettings(rebuild: false);
+        _novelSettingsLoaded = true;
 
         var prog = _fromStart ? null : App.Library.GetProgress(_book.Id);
         int chapter = prog is null ? 0 : Math.Clamp(prog.ChapterIndex, 0, _novel.Chapters.Count - 1);
@@ -1175,6 +1196,7 @@ public partial class ReaderWindow : Window
     /// </summary>
     private void BeginNovelScrollRestore()
     {
+        ResetNovelWheelTarget();
         CancelNovelPaginationWait();
         _novelScrollRestoreVersion++;
         _restoringNovelScrollPosition = _novelSubMode == "scroll";
@@ -1215,6 +1237,7 @@ public partial class ReaderWindow : Window
 
     private void NovelScroll_ScrollChanged(object sender, ScrollChangedEventArgs e)
     {
+        ObserveNovelWheelScroll(e);
         if (_closed || !_interactionReady || _mode != "novel" || _novelSubMode != "scroll" ||
             _restoringNovelScrollPosition || e.VerticalChange == 0) return;
         UpdateNovelInfo();
@@ -1365,8 +1388,13 @@ public partial class ReaderWindow : Window
                 .Where(s => !string.IsNullOrWhiteSpace(s))
                 .Take(200)
                 .ToList();
+            // 系统字体很多时已保存字体可能排在前 200 项之外；保留它，避免仅改边距就丢掉字体选择。
+            if (!string.IsNullOrWhiteSpace(_novelSettings.FontFamily)
+                && !fonts.Any(f => string.Equals(f, _novelSettings.FontFamily, StringComparison.OrdinalIgnoreCase)))
+                fonts.Add(_novelSettings.FontFamily);
             FontCombo.ItemsSource = fonts;
-            FontCombo.SelectedItem = fonts.FirstOrDefault(f => f.Contains(_novelSettings.FontFamily, StringComparison.OrdinalIgnoreCase))
+            FontCombo.SelectedItem = fonts.FirstOrDefault(f => string.Equals(f, _novelSettings.FontFamily, StringComparison.OrdinalIgnoreCase))
+                                     ?? fonts.FirstOrDefault(f => f.Contains(_novelSettings.FontFamily, StringComparison.OrdinalIgnoreCase))
                                      ?? fonts.FirstOrDefault(f => f.Contains("YaHei", StringComparison.OrdinalIgnoreCase));
 
             // 越界的持久化值会被 Slider 静默钳到边界，再被回写成"用户选择"，所以先夹紧再赋值
@@ -1389,13 +1417,16 @@ public partial class ReaderWindow : Window
     {
         for (int i = 0; i < combo.Items.Count; i++)
         {
-            if (combo.Items[i] is ComboBoxItem item && item.Tag as string == tag)
+            if (combo.Items[i] is ComboBoxItem item && string.Equals(item.Tag as string, tag, StringComparison.OrdinalIgnoreCase))
             {
                 combo.SelectedIndex = i;
                 return;
             }
         }
-        combo.SelectedIndex = 0;
+        // 已保存的合法颜色可能不在预设列表里，保留显示，避免下次改边距时被顺带重置。
+        var custom = new ComboBoxItem { Content = "自定义", Tag = tag };
+        combo.Items.Add(custom);
+        combo.SelectedItem = custom;
     }
 
     /// <summary>
@@ -1429,7 +1460,8 @@ public partial class ReaderWindow : Window
 
     private void NovelSetting_Changed(object sender, RoutedEventArgs e)
     {
-        if (_loadingNovelUi || !IsLoaded || _closed) return;
+        if (_loadingNovelUi || !_novelSettingsLoaded || !IsLoaded || _closed) return;
+        _novelSettingsDirty = true;
         (_rebuildTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) }).Stop();
         _rebuildTimer.Tick -= RebuildNovel_Tick;
         _rebuildTimer.Tick += RebuildNovel_Tick;
@@ -1447,14 +1479,14 @@ public partial class ReaderWindow : Window
         if (_rebuildTimer is not null) _rebuildTimer.Stop();
         // 关窗/初始化失败后 tick 仍可能到期：没有守卫时会在已销毁的控件上重排文档
         if (_closed || !IsLoaded || _novel is null || _novel.Chapters.Count == 0) return;
-        ReadNovelSettingsFromUi();
+        FlushNovelSettingsIfDirty();
         RebuildNovelDocumentNow();
     }
 
-    private void ReadNovelSettingsFromUi()
+    private bool ReadNovelSettingsFromUi()
     {
-        if (TextColorCombo.SelectedItem is not ComboBoxItem textColor) return;   // 还没选好就别半套应用
-        if (BgColorCombo.SelectedItem is not ComboBoxItem bgColor) return;
+        if (TextColorCombo.SelectedItem is not ComboBoxItem textColor) return false;
+        if (BgColorCombo.SelectedItem is not ComboBoxItem bgColor) return false;
         _novelSettings.FontFamily = FontCombo.SelectedItem as string ?? _novelSettings.FontFamily;
         _novelSettings.FontSize = FontSizeSlider.Value;
         _novelSettings.LineSpacing = LineSpacingSlider.Value;
@@ -1462,8 +1494,17 @@ public partial class ReaderWindow : Window
         _novelSettings.PageMargin = MarginSlider.Value;
         _novelSettings.TextColor = textColor.Tag as string ?? _novelSettings.TextColor;
         _novelSettings.Background = bgColor.Tag as string ?? _novelSettings.Background;
-        // 注意：这里不写 App.Settings.NovelSettings。排版是"这本书/这个窗口"的状态，
-        // 以前在这里回写全局，导致改一本书的字号会把其它书的默认值一起改掉。
+        SanitizeNovelSettings(_novelSettings);
+        return true;
+    }
+
+    private void FlushNovelSettingsIfDirty()
+    {
+        if (!_novelSettingsLoaded || !_novelSettingsDirty || _novel is null || _closed) return;
+        if (!ReadNovelSettingsFromUi() || !EnsureBookIdCurrent()) return;
+        App.Settings.SaveNovelSettingsForBook(_book.Id, _novelSettings);
+        _novelSettingsDirty = false;
+        _rebuildTimer?.Stop();
     }
 
     private void RebuildNovelDocumentNow()
@@ -1516,8 +1557,17 @@ public partial class ReaderWindow : Window
             _novelSettings.Background = light ? lightBg : darkBg;
         if (_novelSettings.TextColor == (light ? darkText : lightText))
             _novelSettings.TextColor = light ? lightText : darkText;
-        SelectComboByTag(BgColorCombo, _novelSettings.Background);
-        SelectComboByTag(TextColorCombo, _novelSettings.TextColor);
+        bool wasLoading = _loadingNovelUi;
+        _loadingNovelUi = true;
+        try
+        {
+            SelectComboByTag(BgColorCombo, _novelSettings.Background);
+            SelectComboByTag(TextColorCombo, _novelSettings.TextColor);
+        }
+        finally
+        {
+            _loadingNovelUi = wasLoading;
+        }
         // 主题只调整当前窗口的默认颜色，不能把本书的字号/字体等局部排版写成全局默认。
         if (rebuild)
             RebuildNovelDocumentNow();
@@ -1585,30 +1635,6 @@ public partial class ReaderWindow : Window
         _autoScrollTimer = null;
         if (AutoScrollToggle is not null && AutoScrollToggle.IsChecked == true)
             AutoScrollToggle.IsChecked = false;
-    }
-
-    private void NovelScroll_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
-    {
-        StopAutoScroll();
-        if (_novel is null) return;
-        var sv = VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll);
-        if (sv is null) return;
-        double before = sv.VerticalOffset;
-        bool down = e.Delta < 0;
-        // 先让 ScrollViewer 处理这一格滚轮；处理完位置没动 = 已经到章节头/尾，此时才接章
-        Dispatcher.BeginInvoke(DispatcherPriority.Input, () =>
-        {
-            if (_novel is null || _novelSubMode != "scroll") return;
-            var sv2 = VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll);
-            if (sv2 is null) return;
-            double after = sv2.VerticalOffset;
-            bool noMove = Math.Abs(after - before) < 0.5;
-            // 滚轮诊断默认关闭：逐次滚轮都写盘会刷爆日志（需要排查时设 COMICVERSE_DEBUG=1）
-            if (Environment.GetEnvironmentVariable("COMICVERSE_DEBUG") == "1")
-                Log.Info($"[novel] wheel down={down} moved={!noMove} offset={after:F0}/{sv2.ScrollableHeight:F0} chapter={_novelChapter + 1}/{_novel.Chapters.Count} subMode={_novelSubMode}");
-            if (down && noMove && after >= sv2.ScrollableHeight - 3) NovelScrollStep(1);
-            else if (!down && noMove && after <= 3) NovelScrollStep(-1);
-        });
     }
 
     /// <summary>章节边界衔接：delta = +1 下一章（从顶部开始），-1 上一章（停在章末）。返回是否发生了切换。</summary>
@@ -1880,6 +1906,9 @@ public partial class ReaderWindow : Window
 
     private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
     {
+        ResetNovelWheelTarget();
+        // 关闭可能早于 350ms 重排防抖，先读控件的最后选择并保存该书排版。
+        try { FlushNovelSettingsIfDirty(); } catch (Exception ex) { Log.Error("关闭时保存小说排版失败", ex); }
         // 先保存（含模式/缩放），再标记关闭，避免 SaveNow 被提前拦截
         try { SaveNow(); } catch (Exception ex) { Log.Error("关闭时保存进度失败", ex); }
         _closed = true;
@@ -1920,6 +1949,8 @@ public partial class ReaderWindow : Window
 
     private void Theme_Click(object sender, RoutedEventArgs e)
     {
+        // 先保留尚未重排的用户改动，再做只影响显示的主题颜色转换。
+        FlushNovelSettingsIfDirty();
         ThemeService.Toggle();
         App.Settings.Theme = ThemeService.Current;
         ReaderThemeGlyph.Text = ThemeService.Current == "dark" ? "\uE708" : "\uE706";

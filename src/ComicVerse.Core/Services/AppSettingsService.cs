@@ -118,6 +118,37 @@ public sealed class AppSettingsService
         set => Set("novel_settings", JsonSerializer.Serialize(value));
     }
 
+    /// <summary>按书恢复小说排版；没有有效记录时使用全局默认，返回值可独立修改。</summary>
+    public NovelViewSettings GetNovelSettingsForBook(long bookId)
+    {
+        if (bookId <= 0) return NovelSettings.Clone();
+        string json = Get(NovelSettingsBookKey(bookId), "");
+        if (!string.IsNullOrWhiteSpace(json))
+        {
+            try
+            {
+                var settings = JsonSerializer.Deserialize<NovelViewSettings>(json);
+                if (settings is not null) return settings;
+            }
+            catch (JsonException)
+            {
+                // 损坏的单本设置不影响打开，也不修改用户的全局默认值。
+            }
+        }
+        return NovelSettings.Clone();
+    }
+
+    /// <summary>只保存该书的完整排版，不改变其它书或全局默认。</summary>
+    public void SaveNovelSettingsForBook(long bookId, NovelViewSettings settings)
+    {
+        if (bookId <= 0) throw new ArgumentOutOfRangeException(nameof(bookId));
+        ArgumentNullException.ThrowIfNull(settings);
+        Set(NovelSettingsBookKey(bookId), JsonSerializer.Serialize(settings));
+    }
+
+    private static string NovelSettingsBookKey(long bookId)
+        => "novel_settings_book_" + bookId.ToString(CultureInfo.InvariantCulture);
+
     public string LastImportDir
     {
         get => Get("last_import_dir", "");
