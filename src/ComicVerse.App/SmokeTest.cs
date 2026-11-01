@@ -42,6 +42,7 @@ public static class SmokeTest
         main.Show();
         await Task.Delay(900);
         main.Refresh();
+        bool shelfEmptyOk = main.ShelfCount == 0 && main.EmptyHeadingText == "书架还是空的";
 
         var result = await App.Importer.ImportAsync(new[] { samplesDir });
         // 现场生成一本 30 页长漫画，用于真实覆盖“进度条远距离跳页”
@@ -51,6 +52,8 @@ public static class SmokeTest
         result.Updated += longResult.Updated;
         result.Failed.AddRange(longResult.Failed);
         main.Refresh();
+        var shelfChecks = await CheckShelfImprovementsAsync(main, outDir);
+        bool unequalWebtoonOk = await CheckUnequalWebtoonSwitchAsync(outDir);
         var comic = App.Library.GetBooks(filter: "comic").OrderByDescending(b => b.PageCount).FirstOrDefault();
         var novel = App.Library.GetBooks(filter: "novel").FirstOrDefault();
 
@@ -72,6 +75,10 @@ public static class SmokeTest
         bool webtoonOk = false;
         bool doubleOk = false;
         bool novelReaderOk = false;
+        bool novelActualPagingOk = false;
+        string novelActualPagingDetail = "";
+        bool novelScrollAutosaveOk = false;
+        bool shortNovelCompleteOk = false;
         bool pdfReaderOk = false;
         bool pagingOk = false;
         bool webtoonScrollOk = false;
@@ -421,6 +428,10 @@ public static class SmokeTest
             int globalFontBefore = (int)App.Settings.NovelSettings.FontSize;
             reader.TestSetFontSize(30);
             await Task.Delay(900);
+            reader.TestToggleTheme();
+            await Task.Delay(500);
+            reader.TestToggleTheme();
+            await Task.Delay(500);
             novelFontSizeKept = Math.Abs(reader.FontSizeSetting - 30) < 0.5;
             novelFontSizeLeaked = Math.Abs(App.Settings.NovelSettings.FontSize - globalFontBefore) > 0.5;
 
@@ -506,6 +517,29 @@ public static class SmokeTest
             if (!longNovelGenOk)
                 longNovelOpenProbe += $" || 生成数据不合格(解析出 {lr.NovelChapterCount} 章，应为 >=2)";
 
+            // 断言真实 WPF 页号：只检查 _novelPage 会漏掉 GoToPage 的 1-based 边界错误。
+            lr.NovelModePaged.IsChecked = true;
+            lr.TestNovelGoToChapter(1);
+            var pageLayoutWait = System.Diagnostics.Stopwatch.StartNew();
+            while (!lr.IsNovelChapterLayoutStable && pageLayoutWait.Elapsed < TimeSpan.FromSeconds(5)) await Task.Delay(100);
+            await Task.Delay(200);
+            int actualPages = lr.NovelDisplayedPageCount;
+            bool startsAtFirst = lr.NovelPage == 0 && lr.NovelDisplayedPageNumber == 1;
+            string firstPageProbe = $"{lr.NovelPage}/{lr.NovelDisplayedPageNumber}";
+            lr.TestNovelNextPage();
+            await Task.Delay(300);
+            bool secondPageShown = lr.NovelPage == 1 && lr.NovelDisplayedPageNumber == 2;
+            string secondPageProbe = $"{lr.NovelPage}/{lr.NovelDisplayedPageNumber}";
+            for (int page = 2; page < actualPages; page++) lr.TestNovelNextPage();
+            await Task.Delay(300);
+            bool lastPageShown = lr.NovelChapterIndex == 1 && lr.NovelDisplayedPageNumber == actualPages;
+            string lastPageProbe = $"章{lr.NovelChapterIndex} {lr.NovelPage}/{lr.NovelDisplayedPageNumber}";
+            lr.TestNovelNextPage();
+            await Task.Delay(600);
+            novelActualPagingOk = actualPages >= 3 && startsAtFirst && secondPageShown && lastPageShown
+                && lr.NovelChapterIndex == 2 && lr.NovelPage == 0 && lr.NovelDisplayedPageNumber == 1;
+            novelActualPagingDetail = $"总页数{actualPages}; 起始{firstPageProbe}; 下一页{secondPageProbe}; 末页{lastPageProbe}; 接章{lr.NovelChapterIndex} {lr.NovelPage}/{lr.NovelDisplayedPageNumber}";
+
             // 先落到第 3 章：章节号必须 > 0，否则"恢复进度"退化成"是不是第 1 章"没有区分度。
             lr.TestNovelGoToChapter(2);
             await Task.Delay(700);
@@ -524,6 +558,22 @@ public static class SmokeTest
             }
             longNovelScrollableHeight = lr.NovelScrollableHeight;
             longNovelScrollProbe = lr.NovelScrollDocDiagnostics;
+            // 只操作真实视口，不能用同步字段/FlushSave 的测试钩子掩盖章内滚动未自动保存。
+            var settle = System.Diagnostics.Stopwatch.StartNew();
+            while (lr.IsNovelScrollRestoring && settle.Elapsed < TimeSpan.FromSeconds(5)) await Task.Delay(100);
+            // 等前面的 50% 滚动触发的防抖保存结束，否则旧计时器也可能保存后面的 65%，造成假阳性。
+            await Task.Delay(2300);
+            var beforeRawScroll = App.Library.GetProgress(longNovelBook.Id);
+            bool baselineSaved = beforeRawScroll is not null && Math.Abs(beforeRawScroll.ScrollOffset - 0.5) < 0.08;
+            bool rawScroll = lr.TestNovelScrollViewportToFraction(0.65);
+            await Task.Delay(2600);
+            var autoSaved = App.Library.GetProgress(longNovelBook.Id);
+            novelScrollAutosaveOk = baselineSaved && rawScroll && autoSaved is not null
+                && autoSaved.ChapterIndex == lr.NovelChapterIndex
+                && Math.Abs(autoSaved.ScrollOffset - 0.65) < 0.08;
+            // 后面的既有恢复断言仍使用 50% 作为目标。
+            lr.TestNovelScrollToFraction(0.5);
+            await Task.Delay(400);
             longNovelChapterBefore = lr.NovelChapterIndex;
             longNovelScrollFractionBefore = lr.NovelActualScrollFraction;
 
@@ -592,6 +642,8 @@ public static class SmokeTest
             longNovelScrollRestoreDetail = "无法生成长篇小说样例，滚动子模式持久化无法验证";
             novelScrollRestored = false;
         }
+
+        shortNovelCompleteOk = await CheckShortNovelCompletionAsync(outDir);
 
         // PDF 单独导入并打开（单文件发布时 pdfium.dll 需可被加载）
         string pdfPath = Directory.GetFiles(samplesDir, "*.pdf", SearchOption.AllDirectories).FirstOrDefault() ?? "";
@@ -696,6 +748,10 @@ public static class SmokeTest
             $"界面卡顿: 打开漫画最大停顿 {openStallMs:F0}ms | 整个阅读过程最大停顿 {sessionStallMs:F0}ms\n" +
             $"浅色主题顶栏对比度: {lightHeaderOk}\n" +
             $"导入后书架立即刷新: {shelfRefreshOk}\n" +
+            $"书架改进: 空库提示={shelfEmptyOk} 阅读状态与继续阅读={shelfChecks.State} 搜索/筛选无结果提示={shelfChecks.Empty} 打开时重置进度={shelfChecks.Reset}\n" +
+            $"小说实际分页与章末接章: {novelActualPagingOk}（{novelActualPagingDetail}） | 章内滚动自动保存: {novelScrollAutosaveOk}\n" +
+            $"短篇小说一屏读完（翻页/滚动）: {shortNovelCompleteOk}\n" +
+            $"不等高漫画翻页切条漫保持页码: {unequalWebtoonOk}\n" +
             $"条漫页间接缝检测（背景色行数）: {webtoonSeamRows}\n" +
             $"条漫鼠标拖拽滑动: {webtoonDragOk}\n" +
             $"条漫放大后横向平移: {webtoonHorizontalPanOk}（可滚动宽度 {webtoonHorizontalScrollableWidth:F0}px）\n" +
@@ -715,6 +771,10 @@ public static class SmokeTest
         // 界面停顿阈值（毫秒）：打开与阅读过程中都不应出现可感知的长时间卡死
         bool stallOk = openStallMs >= 0 && openStallMs < 1500 && sessionStallMs < 2500 && (longPdfStallMs < 0 || longPdfStallMs < 1500);
         return comic is not null && novel is not null && comicReaderOk && pagingOk && farJumpOk &&
+               shelfEmptyOk && shelfChecks.State && shelfChecks.Empty && shelfChecks.Reset &&
+               novelActualPagingOk && novelScrollAutosaveOk &&
+               shortNovelCompleteOk &&
+               unequalWebtoonOk &&
                lightHeaderOk && shelfRefreshOk && webtoonSeamRows == 0 &&
                webtoonDragOk &&
                webtoonHorizontalPanOk &&
@@ -728,6 +788,141 @@ public static class SmokeTest
                doubleZoomOk && doubleRtlOrderOk &&
                doubleZoomRestored &&
                novelProgressOk && novelScrollChapterOk && novelLightThemeOk && novelRestoreOk && novelArrowOk ? 0 : 1;
+    }
+
+    private static async Task<bool> CheckShortNovelCompletionAsync(string outDir)
+    {
+        string file = Path.Combine(outDir, "短篇一屏测试.txt");
+        await File.WriteAllTextAsync(file, "第1章 星光\n\n少女抬起头，看见一颗星星划过夜空。\n", new System.Text.UTF8Encoding(false));
+        await App.Importer.ImportAsync([file]);
+        var book = App.Library.GetBookByPath(file);
+        if (book is null) return false;
+        var reader = new ReaderWindow(book) { ShowInTaskbar = false };
+        try
+        {
+            reader.Show();
+            var wait = System.Diagnostics.Stopwatch.StartNew();
+            while ((!reader.IsNovelReady || !reader.IsNovelChapterLayoutStable) && wait.Elapsed < TimeSpan.FromSeconds(5))
+                await Task.Delay(100);
+            reader.TestFlushSave();
+            bool pagedDone = reader.IsNovelChapterLayoutStable && reader.NovelDisplayedPageCount == 1
+                && App.Library.GetBook(book.Id)?.Progress == 1;
+            reader.NovelModeScroll.IsChecked = true;
+            wait.Restart();
+            while (!reader.IsNovelChapterLayoutStable && wait.Elapsed < TimeSpan.FromSeconds(5)) await Task.Delay(100);
+            reader.TestFlushSave();
+            var progress = App.Library.GetProgress(book.Id);
+            return pagedDone && reader.IsNovelChapterLayoutStable && reader.NovelSubMode == "scroll"
+                && App.Library.GetBook(book.Id)?.Progress == 1 && progress?.ScrollOffset == 0;
+        }
+        finally { reader.Close(); }
+    }
+
+    private static async Task<bool> CheckUnequalWebtoonSwitchAsync(string outDir)
+    {
+        string file = Path.Combine(outDir, "unequal-pages.cbz");
+        using (var zip = ZipFile.Open(file, ZipArchiveMode.Create))
+        {
+            int[] heights = [200, 2400, 500, 1800, 700];
+            for (int i = 0; i < heights.Length; i++)
+            {
+                var visual = new DrawingVisual();
+                using (var dc = visual.RenderOpen())
+                    dc.DrawRectangle(new SolidColorBrush(Color.FromRgb((byte)(40 + i * 35), 90, 180)), null, new Rect(0, 0, 480, heights[i]));
+                var bitmap = new RenderTargetBitmap(480, heights[i], 96, 96, PixelFormats.Pbgra32);
+                bitmap.Render(visual);
+                var encoder = new PngBitmapEncoder();
+                encoder.Frames.Add(BitmapFrame.Create(bitmap));
+                using var png = new MemoryStream();
+                encoder.Save(png);
+                png.Position = 0;
+                using var stream = zip.CreateEntry($"page{i:00}.png").Open();
+                png.CopyTo(stream);
+            }
+        }
+        await App.Importer.ImportAsync([file]);
+        var book = App.Library.GetBookByPath(file);
+        if (book is null) return false;
+        App.Library.SaveProgress(book.Id, 0.4, 2, 0, 0, "paged", 1);
+        var reader = new ReaderWindow(book) { ShowInTaskbar = false };
+        try
+        {
+            reader.Show();
+            await Task.Delay(1500);
+            reader.TestSwitchToWebtoon();
+            await Task.Delay(1700);
+            bool firstSwitch = reader.IsWebtoonReady && reader.WebtoonCurrentPage == 2;
+            reader.TestSwitchToPaged();
+            await Task.Delay(300);
+            reader.TestJumpToPage(3);
+            await Task.Delay(400);
+            reader.TestSwitchToWebtoon();
+            await Task.Delay(600);
+            Capture(reader, Path.Combine(outDir, "unequal-mode-switch.png"));
+            return firstSwitch && reader.WebtoonCurrentPage == 3;
+        }
+        finally { reader.Close(); }
+    }
+
+    private static async Task<(bool State, bool Empty, bool Reset)> CheckShelfImprovementsAsync(MainWindow main, string outDir)
+    {
+        var books = App.Library.GetBooks(filter: "comic").OrderBy(b => b.PageCount).Take(3).ToList();
+        if (books.Count < 3) return (false, false, false);
+        long missingId = 0;
+        try
+        {
+            foreach (var book in books) App.Library.ResetProgress(book.Id);
+            App.Library.SaveProgress(books[1].Id, 0, 0, 0, 0, "paged", 1.2);
+            App.Library.SaveProgress(books[2].Id, 1, books[2].PageCount - 1, 0, 0, "paged", 1.4);
+            missingId = App.Library.UpsertBook(new Book
+            {
+                Title = "已失联的继续阅读测试", FilePath = Path.Combine(outDir, "not-present.cbz"),
+                Type = BookType.Comic, Format = BookFormat.Cbz, PageCount = 10
+            });
+            App.Library.SaveProgress(missingId, 0.3, 3, 0, 0);
+            main.TestSetShelfQuery("", 1);
+            bool unread = main.VisibleBookIds.Contains(books[0].Id) && !main.VisibleBookIds.Contains(books[1].Id);
+            main.TestSetShelfQuery("", 2, "comic");
+            bool inProgress = main.VisibleBookIds.Contains(books[1].Id) && !main.VisibleBookIds.Contains(books[0].Id)
+                && !main.VisibleBookIds.Contains(books[2].Id) && main.ContinueBookId == books[1].Id;
+            Capture(main, Path.Combine(outDir, "shelf-reading.png"));
+            main.Width = 980;
+            await Task.Delay(200);
+            Capture(main, Path.Combine(outDir, "shelf-minwidth.png"));
+            main.Width = 1280;
+            await Task.Delay(200);
+            main.TestSetShelfQuery("", 3);
+            bool completed = main.VisibleBookIds.Contains(books[2].Id) && !main.VisibleBookIds.Contains(books[1].Id);
+            main.TestSetShelfQuery("__no_such_book_71d7__", 0);
+            bool searchEmpty = main.ShelfCount == 0 && main.EmptyHeadingText == "未找到匹配的书籍";
+            Capture(main, Path.Combine(outDir, "shelf-search-empty.png"));
+            main.TestSetShelfQuery("", 3, "novel");
+            bool filterEmpty = main.ShelfCount == 0 && main.EmptyHeadingText == "当前筛选下没有书籍";
+
+            // 真实打开阅读器后执行和右键菜单同一方法，验证 Closing 保存不会撤销重置。
+            var resetReader = new ReaderWindow(books[2]) { Owner = main, ShowInTaskbar = false };
+            resetReader.Show();
+            await Task.Delay(1800);
+            resetReader.TestFlushSave();
+            main.TestResetProgress(books[2].Id);
+            var p = App.Library.GetProgress(books[2].Id);
+            var resetBook = App.Library.GetBook(books[2].Id);
+            bool resetOk = !resetReader.IsVisible && p is not null && p.PageIndex == 0 && p.ScrollOffset == 0
+                && p.ChapterIndex == 0 && p.Mode == "paged" && Math.Abs(p.Zoom - 1.4) < 0.05
+                && resetBook?.Progress == 0 && resetBook.LastReadTime == default;
+            return (unread && inProgress && completed, searchEmpty && filterEmpty, resetOk);
+        }
+        catch (Exception ex)
+        {
+            Log.Error("书架改进冒烟失败", ex);
+            return (false, false, false);
+        }
+        finally
+        {
+            foreach (var book in books) App.Library.ResetProgress(book.Id);
+            if (missingId > 0) App.Library.RemoveBook(missingId);
+            main.TestSetShelfQuery("", 0);
+        }
     }
 
     private static void Capture(Window window, string path)

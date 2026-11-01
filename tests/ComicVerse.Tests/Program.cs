@@ -79,9 +79,13 @@ public static class Program
             Run("封面生成", () => TestCoverGeneration(work));
             Run("漫画加载器缓存", () => TestComicLoader(samples.Cbz));
             Run("跨书缓存隔离", () => TestCacheIsolation(work));
+            Run("同目录单张图片缓存隔离", () => TestSingleImageCacheIsolation(work));
             Run("书库与进度", () => TestLibrary(samples));
             Run("旧库重复路径迁移", TestLegacyDuplicateMigration);
             Run("并发导入串行化", () => TestConcurrentImportSingleFlight(samples));
+            Run("取消导入保留阅读数据及已导入书籍", () => TestImportCancellationPreservesReadingData(work, samples));
+            Run("刷新元数据保留新阅读进度", () => TestMetadataRefreshPreservesReadingData(work));
+            Run("重置进度恢复未读状态", () => TestResetProgressUnread(work));
             Run("书库并发访问", () => TestLibraryConcurrency(samples));
             Run("取尺寸只读头部", () => TestSizeProbe(work));
             Run("文件夹导入", () => TestFolderImport(work));
@@ -244,6 +248,20 @@ public static class Program
         var list = new List<string> { "page10.png", "page2.png", "page1.png", "page02.png" };
         list.Sort(c);
         Assert(list.SequenceEqual(new[] { "page1.png", "page2.png", "page02.png", "page10.png" }), "自然排序结果错误: " + string.Join(",", list));
+
+        var namedPages = new List<string> { "b.png", "a.png", "ch2/page1.png", "ch1/page10.png", "ch1/page2.png" };
+        namedPages.Sort(c);
+        Assert(namedPages.SequenceEqual(new[] { "a.png", "b.png", "ch1/page2.png", "ch1/page10.png", "ch2/page1.png" }),
+            "不同前缀或子目录的自然顺序错误: " + string.Join(",", namedPages));
+        string[] names = { "a.png", "A.png", "b.png", "ch1", "ch1.2", "ch1.10", "ch2", "ch01", "page2.png", "page02.png" };
+        foreach (string a in names)
+        foreach (string b in names)
+        {
+            Assert(Math.Sign(c.Compare(a, b)) == -Math.Sign(c.Compare(b, a)), $"比较器违反反对称性: {a}, {b}");
+            foreach (string d in names)
+                if (c.Compare(a, b) <= 0 && c.Compare(b, d) <= 0)
+                    Assert(c.Compare(a, d) <= 0, $"比较器违反传递性: {a}, {b}, {d}");
+        }
     }
 
     private static void TestEncodingDetection(string work)
@@ -255,6 +273,22 @@ public static class Program
         Assert(detected.CodePage == 936, "GBK 未识别，得到 " + detected.CodePage);
         string text = detected.GetString(gbk);
         Assert(text.Contains("第一章"), "GBK 解码出现乱码: " + text[..Math.Min(40, text.Length)]);
+
+        const string unicodeText = "第一章：星海🌌\n你好，世界。";
+        Encoding[] bomEncodings =
+        {
+            Encoding.Unicode, Encoding.BigEndianUnicode,
+            Encoding.UTF32, new UTF32Encoding(bigEndian: true, byteOrderMark: true)
+        };
+        foreach (var expected in bomEncodings)
+        {
+            byte[] bytes = expected.GetPreamble().Concat(expected.GetBytes(unicodeText)).ToArray();
+            var actual = EncodingDetector.Detect(bytes);
+            Assert(actual.CodePage == expected.CodePage,
+                $"{expected.WebName} BOM 识别错误，得到 {actual.WebName}");
+            Assert(actual.GetString(bytes).TrimStart('\uFEFF') == unicodeText,
+                $"{expected.WebName} 中文及补充平面字符解码错误");
+        }
     }
 
     private static void TestZipSource(string path)
@@ -484,6 +518,32 @@ public static class Program
         Assert(loaderA.GetCached(0) is not null, "A 书第 1 页未命中缓存");
     }
 
+    private static void TestSingleImageCacheIsolation(string work)
+    {
+        string dir = Path.Combine(work, "single-image-cache");
+        Directory.CreateDirectory(dir);
+        string fileA = Path.Combine(dir, "a.png");
+        string fileB = Path.Combine(dir, "b.png");
+        TestData.MakePng(fileA, 90, 120, Colors.CornflowerBlue, "A");
+        TestData.MakePng(fileB, 150, 90, Colors.Coral, "B");
+
+        var cache = new ImageCacheService();
+        using var loaderA = new ComicImageLoader(ComicSourceFactory.Create(fileA), cache, prefetchCount: 0);
+        using var loaderB = new ComicImageLoader(ComicSourceFactory.Create(fileB), cache, prefetchCount: 0);
+        using var folder = new ComicImageLoader(ComicSourceFactory.Create(dir), cache, prefetchCount: 0);
+
+        var a = loaderA.GetPageAsync(0).GetAwaiter().GetResult();
+        var b = loaderB.GetPageAsync(0).GetAwaiter().GetResult();
+        Assert(a is { PixelWidth: 90, PixelHeight: 120 }, "单图 A 加载失败");
+        Assert(b is { PixelWidth: 150, PixelHeight: 90 }, "同目录单图 B 命中了 A 的画面");
+        var folderB = folder.GetPageAsync(1).GetAwaiter().GetResult();
+        Assert(folder.PageCount == 2 && folderB is { PixelWidth: 150, PixelHeight: 90 },
+            $"文件夹源和单图源未正确隔离：共 {folder.PageCount} 页，第 2 页 {folderB?.PixelWidth}x{folderB?.PixelHeight}");
+        cache.Clear(loaderA.CacheKey);
+        Assert(loaderA.GetCached(0) is null && loaderB.GetCached(0) is not null
+               && folder.GetCached(1) is not null, "清理单图 A 的缓存影响了同目录的其他源");
+    }
+
     private static void TestLibrary(Samples samples)
     {
         string db = Path.Combine(Path.GetTempPath(), "comicverse-test-" + Guid.NewGuid().ToString("N")[..8] + ".db");
@@ -611,6 +671,119 @@ public static class Program
             try { File.Delete(db + "-wal"); } catch { }
             try { File.Delete(db + "-shm"); } catch { }
         }
+    }
+
+    private sealed class InlineImportProgress(Action<ImportProgress> report) : IProgress<ImportProgress>
+    {
+        public void Report(ImportProgress value) => report(value);
+    }
+
+    private static void TestImportCancellationPreservesReadingData(string work, Samples samples)
+    {
+        string db = Path.Combine(work, "cancel-import.db");
+        using var lib = new LibraryService(db);
+        long readingId = lib.UpsertBook(new Book
+        {
+            Title = "正在阅读的书", FilePath = Path.Combine(work, "reading.cbz"),
+            Type = BookType.Comic, Format = BookFormat.Cbz, PageCount = 100
+        });
+        lib.SaveProgress(readingId, 0.1, 9, 0, 0, "webtoon", 1);
+        lib.SetSetting("theme", "dark");
+
+        using var cancel = new CancellationTokenSource();
+        bool cancellationPointReached = false;
+        var progress = new InlineImportProgress(p =>
+        {
+            // 第一本已完整导入，第二本尚未开始解析；模拟此时阅读窗口保存数据，再取消导入。
+            if (p.Done != 2) return;
+            cancellationPointReached = true;
+            lib.SaveProgress(readingId, 0.6, 59, 123, 0, "webtoon", 1.5);
+            lib.AddBookmark(new Bookmark { BookId = readingId, PageIndex = 59, Note = "导入期间的书签" });
+            lib.SetSetting("theme", "light");
+            cancel.Cancel();
+        });
+        var importer = new ImportService(lib);
+        bool canceled = false;
+        try
+        {
+            importer.ImportAsync(new[] { samples.Cbz, samples.Tar }, progress, cancel.Token)
+                .GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException)
+        {
+            canceled = true;
+        }
+        Assert(canceled && cancellationPointReached, "未在指定的导入边界取消");
+
+        // 新连接确认数据已经落盘，不能只验证共享连接里尚未提交的事务视图。
+        using (var reopened = new LibraryService(db))
+        {
+            var saved = reopened.GetProgress(readingId);
+            Assert(saved is { PageIndex: 59, Mode: "webtoon" } && Math.Abs(saved.Zoom - 1.5) < 0.001,
+                "取消导入回滚了同时保存的阅读进度/缩放");
+            Assert(reopened.GetBookmarks(readingId).Count == 1, "取消导入回滚了同时添加的书签");
+            Assert(reopened.GetSetting("theme") == "light", "取消导入回滚了同时保存的设置");
+            Assert(reopened.GetBookByPathNoCase(samples.Cbz) is not null, "取消导入丢失了已经成功导入的书");
+            Assert(reopened.GetBookByPathNoCase(samples.Tar) is null, "取消后仍然导入了未开始解析的书");
+        }
+
+        // 取消也必须释放串行导入门闩，后续导入可以继续。
+        var resumed = importer.ImportAsync(new[] { samples.Tar }).GetAwaiter().GetResult();
+        Assert(resumed.Imported == 1 && resumed.Failed.Count == 0, "取消后无法继续导入");
+    }
+
+    private static void TestMetadataRefreshPreservesReadingData(string work)
+    {
+        string db = Path.Combine(work, "metadata-refresh.db");
+        using var lib = new LibraryService(db);
+        long id = lib.UpsertBook(new Book
+        {
+            Title = "旧标题", FilePath = Path.Combine(work, "metadata.cbz"),
+            Type = BookType.Comic, Format = BookFormat.Cbz, PageCount = 100,
+            CoverPath = "original-cover.png"
+        });
+        lib.SaveProgress(id, 0.1, 9, 0, 0, "webtoon", 1);
+        var stale = lib.GetBook(id)!;
+        lib.SaveProgress(id, 0.7, 69, 45, 0, "double", 1.8);
+        DateTime lastRead = lib.GetBook(id)!.LastReadTime;
+
+        // 导入的解析结果带着读取时的旧进度，刷新元数据必须保留后来保存的新阅读状态。
+        stale.Title = "更新标题";
+        stale.PageCount = 120;
+        stale.CoverPath = null;
+        lib.UpdateBookMetadata(stale);
+        using var reopened = new LibraryService(db);
+        var book = reopened.GetBook(id)!;
+        var progress = reopened.GetProgress(id)!;
+        Assert(book.Title == "更新标题" && book.PageCount == 120 && book.CoverPath == "original-cover.png",
+            "元数据未刷新或丢失原有封面");
+        Assert(Math.Abs(book.Progress - 0.7) < 0.001 && book.LastReadTime == lastRead
+               && progress.PageIndex == 69 && progress.Mode == "double" && Math.Abs(progress.Zoom - 1.8) < 0.001,
+            "元数据刷新覆盖了刚保存的新阅读进度/阅读时间");
+    }
+
+    private static void TestResetProgressUnread(string work)
+    {
+        string db = Path.Combine(work, "reset-unread.db");
+        using var lib = new LibraryService(db);
+        long id = lib.UpsertBook(new Book
+        {
+            Title = "已读书籍", FilePath = Path.Combine(work, "reset.cbz"),
+            Type = BookType.Comic, Format = BookFormat.Cbz, PageCount = 10
+        });
+        lib.SaveProgress(id, 1, 9, 200, 3, "double", 1.6);
+        lib.AddBookmark(new Bookmark { BookId = id, PageIndex = 7, Note = "保留书签" });
+        lib.ResetProgress(id);
+        using var reopened = new LibraryService(db);
+        var book = reopened.GetBook(id)!;
+        var progress = reopened.GetProgress(id)!;
+        Assert(book.Progress == 0 && book.LastReadTime == default,
+            "重置进度后仍被归为在读或已读");
+        Assert(progress.PageIndex == 0 && progress.ScrollOffset == 0 && progress.ChapterIndex == 0
+               && progress.Mode == "double" && Math.Abs(progress.Zoom - 1.6) < 0.001,
+            "重置阅读位置未归零或误清除了阅读模式/缩放");
+        Assert(reopened.GetRecent().All(b => b.Id != id) && reopened.GetBookmarks(id).Count == 1,
+            "重置后仍出现在最近阅读中或误删了书签");
     }
 
     private static void TestLegacyDuplicateMigration()

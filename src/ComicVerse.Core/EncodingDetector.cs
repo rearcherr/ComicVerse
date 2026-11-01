@@ -19,15 +19,17 @@ public static class EncodingDetector
 
     public static Encoding Detect(byte[] data)
     {
+        // UTF-32LE 的 BOM 以 UTF-16LE 的 FF FE 开头，必须先匹配更长的签名。
+        if (data.Length >= 4 && data[0] == 0xFF && data[1] == 0xFE && data[2] == 0x00 && data[3] == 0x00)
+            return Encoding.UTF32;
+        if (data.Length >= 4 && data[0] == 0x00 && data[1] == 0x00 && data[2] == 0xFE && data[3] == 0xFF)
+            return new UTF32Encoding(bigEndian: true, byteOrderMark: true);
         if (data.Length >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF)
             return new UTF8Encoding(false);
         if (data.Length >= 2 && data[0] == 0xFF && data[1] == 0xFE)
             return Encoding.Unicode;
         if (data.Length >= 2 && data[0] == 0xFE && data[1] == 0xFF)
             return Encoding.BigEndianUnicode;
-        if (data.Length >= 4 && data[0] == 0xFF && data[1] == 0xFE && data[2] == 0x00 && data[3] == 0x00)
-            return Encoding.UTF32;
-
         // 严格 UTF-8：合法则优先（现代文件绝大多数是 UTF-8）
         try
         {

@@ -20,6 +20,8 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<Book> _books = new();
     private string _filter = "all";
     private string _sort = "recent";
+    private int _readingState;
+    private Book? _continueBook;
     private bool _gridMode = true;
     private DispatcherTimer? _searchTimer;
 
@@ -39,6 +41,7 @@ public partial class MainWindow : Window
             _searchTimer.Stop();
             RefreshBooks();
         };
+        Closed += (_, _) => _searchTimer.Stop();
     }
 
     public void Refresh() => RefreshBooks();
@@ -49,6 +52,20 @@ public partial class MainWindow : Window
         _books.Any(b => b.Title.Contains(keyword, StringComparison.OrdinalIgnoreCase)
                         || b.FilePath.Contains(keyword, StringComparison.OrdinalIgnoreCase));
     internal int ShelfCount => _books.Count;
+    internal IReadOnlyList<long> VisibleBookIds => _books.Select(b => b.Id).ToList();
+    internal string EmptyHeadingText => EmptyHeading.Text;
+    internal long? ContinueBookId => _continueBook?.Id;
+    internal void TestSetShelfQuery(string search, int readingState, string type = "all")
+    {
+        SearchBox.Text = search;
+        ReadingStateBox.SelectedIndex = readingState;
+        FilterAll.IsChecked = type == "all";
+        FilterComic.IsChecked = type == "comic";
+        FilterNovel.IsChecked = type == "novel";
+        _searchTimer?.Stop();
+        RefreshBooks();
+    }
+    internal void TestResetProgress(long bookId) => ResetBookProgress(bookId);
 
     private void Window_Loaded(object sender, RoutedEventArgs e)
     {
@@ -66,7 +83,15 @@ public partial class MainWindow : Window
     {
         if (!IsLoaded) return;
         _books.Clear();
-        var list = App.Library.GetBooks(SearchBox?.Text.Trim() ?? "", _filter, _sort);
+        var allBooks = App.Library.GetBooks();
+        var list = App.Library.GetBooks(SearchBox?.Text.Trim() ?? "", _filter, _sort)
+            .Where(b => _readingState switch
+            {
+                1 => b.LastReadTime == default && b.Progress < 1,
+                2 => b.LastReadTime != default && b.Progress < 1,
+                3 => b.Progress >= 1,
+                _ => true
+            }).ToList();
         // 轻量校验源文件是否还在：失联的书在书架上标记出来，避免用户反复点开报错却无从判断
         try
         {
@@ -80,11 +105,34 @@ public partial class MainWindow : Window
             _books.Add(b);
         RebuildRows();
         if (ListView.ItemsSource is null) ListView.ItemsSource = _books;
-        StatusText.Text = $"共 {_books.Count} 本书 · 图片缓存 {App.SharedCache.EstimatedBytes / (1024 * 1024)} MB";
+        StatusText.Text = $"显示 {_books.Count} / {allBooks.Count} 本书 · 图片缓存 {App.SharedCache.EstimatedBytes / (1024 * 1024)} MB";
         bool empty = _books.Count == 0;
+        bool libraryEmpty = allBooks.Count == 0;
+        bool searching = !string.IsNullOrWhiteSpace(SearchBox?.Text);
+        EmptyHeading.Text = libraryEmpty ? "书架还是空的" : searching ? "未找到匹配的书籍" : "当前筛选下没有书籍";
+        EmptyHint.Text = libraryEmpty ? "把漫画或小说文件/文件夹拖进窗口，或点击「添加文件」开始"
+            : searching ? "试试其他书名或路径，或清除搜索与筛选" : "切换类型或阅读状态，查看其他书籍";
+        ClearFiltersButton.Visibility = !libraryEmpty && empty ? Visibility.Visible : Visibility.Collapsed;
         EmptyState.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
         ShelfList.Visibility = _gridMode && !empty ? Visibility.Visible : Visibility.Collapsed;
         ListView.Visibility = !_gridMode && !empty ? Visibility.Visible : Visibility.Collapsed;
+        // 继续阅读不受当前筛选影响，跳过读完的书与已失联的源文件。
+        _continueBook = allBooks.Where(b => b.LastReadTime != default && b.Progress < 1)
+            .OrderByDescending(b => b.LastReadTime)
+            .FirstOrDefault(b => File.Exists(b.FilePath) || Directory.Exists(b.FilePath));
+        if (_continueBook?.Error == LibraryService.MissingErrorText)
+        {
+            // 移动硬盘重新连接后，这本书可能不在当前筛选结果中，也应清除过时的失联标记。
+            App.Library.ClearMissing(_continueBook.Id);
+            _continueBook.Error = null;
+        }
+        ContinueButton.IsEnabled = _continueBook is not null;
+        ContinueButton.Content = new TextBlock
+        {
+            Text = _continueBook is null ? "继续阅读" : "继续阅读：" + _continueBook.Title,
+            TextTrimming = TextTrimming.CharacterEllipsis
+        };
+        ContinueButton.ToolTip = _continueBook?.Title ?? "打开并阅读一本书后，可在这里继续";
     }
 
     private void RebuildRows()
@@ -102,6 +150,45 @@ public partial class MainWindow : Window
     {
         _searchTimer?.Stop();
         _searchTimer?.Start();
+    }
+
+    private void ReadingState_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        _readingState = Math.Max(0, ReadingStateBox.SelectedIndex);
+        RefreshBooks();
+    }
+
+    private void ContinueReading_Click(object sender, RoutedEventArgs e)
+    {
+        if (_continueBook is not null) OpenReader(_continueBook);
+    }
+
+    private void ClearFilters_Click(object sender, RoutedEventArgs e)
+    {
+        _searchTimer?.Stop();
+        SearchBox.Clear();
+        ReadingStateBox.SelectedIndex = 0;
+        FilterAll.IsChecked = true;
+        _searchTimer?.Stop();
+        RefreshBooks();
+        SearchBox.Focus();
+    }
+
+    private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.F && Keyboard.Modifiers == ModifierKeys.Control)
+        {
+            SearchBox.Focus();
+            SearchBox.SelectAll();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape && SearchBox.IsKeyboardFocusWithin && SearchBox.Text.Length > 0)
+        {
+            SearchBox.Clear();
+            _searchTimer?.Stop();
+            RefreshBooks();
+            e.Handled = true;
+        }
     }
 
     private void Filter_Changed(object sender, RoutedEventArgs e)
@@ -190,10 +277,7 @@ public partial class MainWindow : Window
         var resetItem = new MenuItem { Header = "重置阅读进度" };
         resetItem.Click += (_, _) =>
         {
-            // 只清位置，保留阅读模式/缩放（原先复用 SaveProgress 的默认参数会把它们一并清空）
-            App.Library.ResetProgress(book.Id);
-            CloseReadersFor(book.Id);
-            RefreshBooks();
+            ResetBookProgress(book.Id);
         };
         var openFolderItem = new MenuItem { Header = "打开所在文件夹" };
         openFolderItem.Click += (_, _) =>
@@ -219,6 +303,14 @@ public partial class MainWindow : Window
         menu.Items.Add(removeItem);
         menu.IsOpen = true;
         e.Handled = true;
+    }
+
+    private void ResetBookProgress(long bookId)
+    {
+        // Closing 会保存当前位置，必须先关窗再清零；模式与缩放仍保留。
+        CloseReadersFor(bookId);
+        App.Library.ResetProgress(bookId);
+        RefreshBooks();
     }
 
     /// <summary>关闭所有正在显示该书的阅读窗口（重置进度/移出书架前必须先做，避免残留窗口写回旧状态）。</summary>

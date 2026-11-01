@@ -369,6 +369,32 @@ public sealed class LibraryService : IDisposable
         return (long)cmd.ExecuteScalar()!;
     }
 
+    /// <summary>只刷新导入元数据，不将解析前读取的旧进度/阅读时间写回。</summary>
+    [MethodImpl(MethodImplOptions.Synchronized)]
+    public void UpdateBookMetadata(Book book)
+    {
+        if (book.Id <= 0) throw new ArgumentException("元数据更新需要已有书籍 ID", nameof(book));
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE books SET title=$t, path=$path, type=$ty, format=$f, size=$s,
+                fingerprint=$fp, page_count=$pc, chapter_count=$cc,
+                cover_path=COALESCE($cv, cover_path), error=$er
+            WHERE id=$id;
+            """;
+        cmd.Parameters.AddWithValue("$id", book.Id);
+        cmd.Parameters.AddWithValue("$t", book.Title);
+        cmd.Parameters.AddWithValue("$path", book.FilePath);
+        cmd.Parameters.AddWithValue("$ty", (int)book.Type);
+        cmd.Parameters.AddWithValue("$f", (int)book.Format);
+        cmd.Parameters.AddWithValue("$s", book.FileSize);
+        cmd.Parameters.AddWithValue("$fp", book.Fingerprint);
+        cmd.Parameters.AddWithValue("$pc", book.PageCount);
+        cmd.Parameters.AddWithValue("$cc", book.ChapterCount);
+        cmd.Parameters.AddWithValue("$cv", (object?)book.CoverPath ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$er", (object?)book.Error ?? DBNull.Value);
+        cmd.ExecuteNonQuery();
+    }
+
     /// <summary>把书的源文件标记为"失联"（文件被删除/移动/改名）。</summary>
     [MethodImpl(MethodImplOptions.Synchronized)]
     public void MarkMissing(long id, string error = "源文件已不存在，可能被移动、重命名或删除")
@@ -569,7 +595,7 @@ public sealed class LibraryService : IDisposable
         using var cmd = _conn.CreateCommand();
         cmd.CommandText = """
             UPDATE progress SET page_index=0, scroll=0, chapter_index=0 WHERE book_id=$id;
-            UPDATE books SET progress=0 WHERE id=$id;
+            UPDATE books SET progress=0, last_read=NULL WHERE id=$id;
             """;
         cmd.Parameters.AddWithValue("$id", bookId);
         cmd.ExecuteNonQuery();

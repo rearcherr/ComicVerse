@@ -34,9 +34,6 @@ public sealed class ImportService
         _library = library;
     }
 
-    /// <summary>每多少本提交一次事务（兼顾"半成品书架"与长时间持锁）。</summary>
-    private const int BatchSize = 50;
-
     public async Task<ImportResult> ImportAsync(IEnumerable<string> paths, IProgress<ImportProgress>? progress = null, CancellationToken ct = default)
     {
         await _importGate.WaitAsync(ct).ConfigureAwait(false);
@@ -77,42 +74,25 @@ public sealed class ImportService
         // 每次 Report 一个快照：progress 回调在 UI 线程异步执行，复用同一个实例会让状态栏读到"未来的 Done"
         Report(progress, new ImportProgress { Total = total, Done = 0, Current = "" });
 
-        // 一批导入放在一个事务里：中途取消/崩溃时整批回滚，不会留下"导了一半"的书架。
-        // 每 BatchSize 本提交一次，避免一个几千本的大文件夹长时间持有写锁。
-        var batch = _library.BeginTransaction();
-        int inBatch = 0;
-        try
+        // 每本书解析完后才通过一次 UpsertBook 原子写入；不要在耗时解析期间
+        // 持有共享连接的事务，否则同时保存的阅读进度、书签和设置也会被导入回滚。
+        // 取消时保留已经导入成功的书；已开始解析的当前书完成后，在下一本开始前停止。
+        foreach (string item in work)
         {
-            foreach (string item in work)
+            ct.ThrowIfCancellationRequested();
+            done++;
+            Report(progress, new ImportProgress { Total = total, Done = done, Current = item });
+            try
             {
-                ct.ThrowIfCancellationRequested();
-                done++;
-                Report(progress, new ImportProgress { Total = total, Done = done, Current = item });
-                try
-                {
-                    bool updated = await Task.Run(() => ImportOne(item, result), ct).ConfigureAwait(true);
-                    if (updated) result.Updated++;
-                    else result.Imported++;
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    Log.Error("导入失败: " + item, ex);
-                    result.Failed.Add(item + " — " + (ex is ComicSourceException or InvalidDataException ? ex.Message : "解析失败，请检查文件是否损坏"));
-                }
-
-                if (++inBatch >= BatchSize)
-                {
-                    batch.Commit();
-                    batch.Dispose();
-                    inBatch = 0;
-                    batch = _library.BeginTransaction();
-                }
+                bool updated = await Task.Run(() => ImportOne(item, result), ct).ConfigureAwait(false);
+                if (updated) result.Updated++;
+                else result.Imported++;
             }
-            batch.Commit();
-        }
-        finally
-        {
-            batch.Dispose();   // 未 Commit 的话这里回滚
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Log.Error("导入失败: " + item, ex);
+                result.Failed.Add(item + " — " + (ex is ComicSourceException or InvalidDataException ? ex.Message : "解析失败，请检查文件是否损坏"));
+            }
         }
         return result;
     }
@@ -236,7 +216,7 @@ public sealed class ImportService
             samePath.Fingerprint = book.Fingerprint;
             samePath.Format = book.Format;
             samePath.Error = null;
-            _library.UpsertBook(samePath);
+            _library.UpdateBookMetadata(samePath);
             return true; // updated
         }
 
@@ -256,7 +236,7 @@ public sealed class ImportService
                 sameContent.PageCount = book.PageCount;
                 sameContent.Format = book.Format;
                 sameContent.Error = null;
-                _library.UpsertBook(sameContent);
+                _library.UpdateBookMetadata(sameContent);
                 return true;
             }
 
@@ -333,7 +313,7 @@ public sealed class ImportService
             samePath.Fingerprint = book.Fingerprint;
             samePath.Format = book.Format;
             samePath.Error = null;
-            _library.UpsertBook(samePath);
+            _library.UpdateBookMetadata(samePath);
             return true;
         }
 
@@ -351,7 +331,7 @@ public sealed class ImportService
                 sameContent.ChapterCount = book.ChapterCount;
                 sameContent.Format = book.Format;
                 sameContent.Error = null;
-                _library.UpsertBook(sameContent);
+                _library.UpdateBookMetadata(sameContent);
                 return true;
             }
 

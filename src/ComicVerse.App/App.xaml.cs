@@ -39,6 +39,13 @@ public partial class App : Application
         {
             // OnStartup 是 async void，异常不会被任何调用方捕获，必须在这里自己收口。
             Log.Error("启动失败", ex);
+            if (e.Args.Contains("--smoke"))
+            {
+                // 无人值守自检失败必须立即退出，不能弹出对话框让 CI 一直等待。
+                Console.Error.WriteLine(ex);
+                Shutdown(1);
+                return;
+            }
             try
             {
                 MessageBox.Show($"ComicVerse 启动失败：\n{ex.Message}\n\n日志目录：\n{Path.Combine(AppDataDir, "logs")}",

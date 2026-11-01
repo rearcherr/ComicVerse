@@ -73,6 +73,7 @@ jobs:
 
           Copy-Item './publish/ComicVerse.exe' $stage
           Copy-Item './docs/使用说明.txt' $stage
+          Copy-Item './LICENSE' $stage
           if (Test-Path './samples') {
             Copy-Item './samples' $stage -Recurse
           } else {
@@ -101,8 +102,9 @@ jobs:
           # 两种分隔符都要匹配，否则 CI 会误判制品校验失败。
           $hasSamples= @($names | Where-Object { $_ -like 'samples/*' -or $_ -like 'samples\*' }).Count -gt 0
           $hasDoc    = @($names | Where-Object { $_ -like '*.txt' }).Count -gt 0
-          if (-not $hasExe -or -not $hasSamples -or -not $hasDoc) {
-            Write-Error "制品校验失败: exe=$hasExe samples=$hasSamples doc=$hasDoc"
+          $hasLicense= $names -contains 'LICENSE'
+          if (-not $hasExe -or -not $hasSamples -or -not $hasDoc -or -not $hasLicense) {
+            Write-Error "制品校验失败: exe=$hasExe samples=$hasSamples doc=$hasDoc license=$hasLicense"
             exit 1
           }
           Write-Host "制品校验通过：exe=$hasExe samples=$hasSamples doc=$hasDoc"

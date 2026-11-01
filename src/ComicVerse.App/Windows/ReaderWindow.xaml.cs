@@ -40,15 +40,22 @@ public partial class ReaderWindow : Window
     private bool _rtl;
     private bool _webtoonInitialized;
     private double _webtoonFraction;
+    private double? _webtoonRestoreFraction;
 
     private int _novelChapter;
     /// <summary>待定位到末页的章节号：回退到上一章时用（-1 表示无）。</summary>
     private int _novelPendingLastPage = -1;
     private int _novelPage;
     private double _novelScrollFraction;
+    private bool _restoringNovelScrollPosition;
+    private int _novelScrollRestoreVersion;
     private double? _pendingNovelPageFraction;
     private string _novelSubMode = "paged";
     private readonly Dictionary<int, int> _chapterPages = new();
+    private DynamicDocumentPaginator? _waitingNovelPaginator;
+    private EventHandler? _novelPaginationCompleted;
+    private int _novelPaginationVersion;
+    private bool _novelPageLayoutPending;
     private NovelViewSettings _novelSettings = new();
     private Encoding? _txtEncoding;
 
@@ -159,6 +166,8 @@ public partial class ReaderWindow : Window
     internal string ZoomTextValue => ZoomText.Text;
     private bool _syncingZoom;
     internal int NovelPage => _novelPage;
+    internal int NovelDisplayedPageNumber => NovelPaged.MasterPageNumber;
+    internal int NovelDisplayedPageCount => NovelPaged.PageCount;
     internal int NovelChapterIndex => _novelChapter;
     internal void TestNovelNextPage() => NovelNext();
     internal void TestNovelNextChapter()
@@ -175,6 +184,16 @@ public partial class ReaderWindow : Window
     // ---- 自检钩子：小说子模式 / 滚动位置 / 排版设置（--smoke 使用）----
     internal string NovelSubMode => _novelSubMode;
     internal double NovelScrollFraction => _novelScrollFraction;
+    internal bool IsNovelScrollRestoring => _restoringNovelScrollPosition;
+    internal bool IsNovelChapterLayoutStable => HasStableNovelChapterLayout();
+    internal bool TestNovelScrollViewportToFraction(double fraction)
+    {
+        var sv = VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll);
+        if (sv is null || sv.ScrollableHeight <= 0.5) return false;
+        // 仅移动真实视口，不直接更新记录值或调用保存，确保冒烟覆盖 ScrollChanged 路径。
+        sv.ScrollToVerticalOffset(Math.Clamp(fraction, 0, 1) * sv.ScrollableHeight);
+        return true;
+    }
     /// <summary>滚动子模式下滑动视图的实际可滚动高度（0 = 本章一屏就能显示完，滚不动）。</summary>
     internal double NovelScrollableHeight
         => VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll)?.ScrollableHeight ?? 0;
@@ -284,6 +303,7 @@ public partial class ReaderWindow : Window
         var prog = _fromStart ? null : App.Library.GetProgress(_book.Id);
         _page = prog is null ? 0 : Math.Clamp(prog.PageIndex, 0, _loader.PageCount - 1);
         _webtoonFraction = prog?.ScrollOffset ?? 0;
+        _webtoonRestoreFraction = prog?.Mode == "webtoon" ? _webtoonFraction : null;
         if (prog is { Zoom: > 0 })
         {
             _zoom = Math.Clamp(prog.Zoom, 0.2, 3.0);
@@ -645,6 +665,10 @@ public partial class ReaderWindow : Window
             _page = WebtoonView.CurrentPage;
             _webtoonFraction = WebtoonView.ScrollFraction;
         }
+        int targetPage = _page;
+        double targetFraction = _webtoonFraction;
+        double? savedFraction = _webtoonRestoreFraction;
+        _webtoonRestoreFraction = null;
         _mode = "webtoon";
         _pageLoadCts?.Cancel();
         WebtoonView.Visibility = Visibility.Visible;
@@ -674,7 +698,10 @@ public partial class ReaderWindow : Window
             {
                 if (_closed || _mode != "webtoon") return;
                 WebtoonView.EnsureLayout();
-                WebtoonView.ScrollToFraction(_fromStart ? 0 : _webtoonFraction);
+                if (savedFraction is double fraction)
+                    WebtoonView.ScrollToFraction(fraction);
+                else
+                    WebtoonView.ScrollToPage(targetPage);
                 UpdateComicInfo();
             });
         }
@@ -686,10 +713,10 @@ public partial class ReaderWindow : Window
             {
                 if (_closed || _mode != "webtoon" || _loader is null || _loader.PageCount == 0) return;
                 WebtoonView.EnsureLayout();
-                double target = previousMode == "webtoon"
-                    ? _webtoonFraction
-                    : (double)Math.Clamp(_page, 0, _loader.PageCount - 1) / _loader.PageCount;
-                WebtoonView.ScrollToFraction(target);
+                if (previousMode == "webtoon")
+                    WebtoonView.ScrollToFraction(targetFraction);
+                else
+                    WebtoonView.ScrollToPage(targetPage);
                 UpdateComicInfo();
             });
         }
@@ -968,6 +995,7 @@ public partial class ReaderWindow : Window
         var chapter = _novel.Chapters[_novelChapter];
         var builder = new NovelDocumentBuilder(_imageResolver);
         var doc = builder.Build(chapter, _novelSettings);
+        BeginNovelScrollRestore();
         NovelPaged.Document = null;
         NovelScroll.Document = null;
         NovelPaged.Document = doc;
@@ -994,36 +1022,103 @@ public partial class ReaderWindow : Window
 
         Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
         {
-            int pages = ComputeChapterPages();
-            _chapterPages[_novelChapter] = pages;
-            if (_novelPendingLastPage == _novelChapter)
-            {
-                _novelPendingLastPage = -1;
-                _novelPage = Math.Max(0, pages - 1);   // 回退到上一章时停在末页
-            }
-            else if (_pendingNovelPageFraction is double pageFraction)
-            {
-                _pendingNovelPageFraction = null;
-                _novelPage = (int)Math.Round(Math.Clamp(pageFraction, 0, 1) * Math.Max(0, pages - 1));
-            }
-            _novelPage = Math.Clamp(_novelPage, 0, pages - 1);
-            NovelPaged.GoToPage(_novelPage);
+            if (_closed || !ReferenceEquals(doc, NovelPaged.Document ?? NovelScroll.Document)) return;
             if (_novelSubMode == "scroll")
             {
-                var sv = VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll);
-                if (sv is not null && sv.ScrollableHeight > 0.5)
-                    sv.ScrollToVerticalOffset(_novelScrollFraction * sv.ScrollableHeight);
-                else
-                    RestoreNovelScrollFraction();   // 文档还没量出高度：继续等
+                RestoreNovelScrollFraction();
+                UpdateNovelInfo();
+                return;
             }
-            UpdateNovelInfo();
+            WhenNovelPaginationReady(pages =>
+            {
+                if (_novelPendingLastPage == _novelChapter)
+                {
+                    _novelPendingLastPage = -1;
+                    _novelPage = pages - 1;
+                }
+                else if (_pendingNovelPageFraction is double pageFraction)
+                {
+                    _pendingNovelPageFraction = null;
+                    _novelPage = (int)Math.Round(Math.Clamp(pageFraction, 0, 1) * (pages - 1));
+                }
+                _novelPage = Math.Clamp(_novelPage, 0, pages - 1);
+                GoToNovelPage();
+                UpdateNovelInfo();
+            });
         });
     }
 
     private int ComputeChapterPages()
     {
-        int pages = NovelPaged.PageCount;
-        return pages > 0 ? pages : 1;
+        if (_novelSubMode == "paged" && NovelPaged.Document is IDocumentPaginatorSource source)
+        {
+            int pages = Math.Max(1, source.DocumentPaginator.PageCount);
+            if (source.DocumentPaginator.IsPageCountValid)
+                _chapterPages[_novelChapter] = pages;
+            return pages;
+        }
+        return _chapterPages.GetValueOrDefault(_novelChapter, 1);
+    }
+
+    private void CancelNovelPaginationWait()
+    {
+        _novelPaginationVersion++;
+        if (_waitingNovelPaginator is not null && _novelPaginationCompleted is not null)
+            _waitingNovelPaginator.PaginationCompleted -= _novelPaginationCompleted;
+        _waitingNovelPaginator = null;
+        _novelPaginationCompleted = null;
+        _novelPageLayoutPending = false;
+    }
+
+    private void WhenNovelPaginationReady(Action<int> ready)
+    {
+        CancelNovelPaginationWait();
+        if (_closed || _novelSubMode != "paged" || NovelPaged.Document is not IDocumentPaginatorSource source) return;
+        var document = NovelPaged.Document;
+        var paginator = source.DocumentPaginator;
+        int version = _novelPaginationVersion;
+        _novelPageLayoutPending = true;
+        void Apply()
+        {
+            if (_closed || version != _novelPaginationVersion || _novelSubMode != "paged"
+                || !ReferenceEquals(document, NovelPaged.Document)) return;
+            if (!paginator.IsPageCountValid)
+            {
+                WhenNovelPaginationReady(ready);
+                return;
+            }
+            int pages = Math.Max(1, paginator.PageCount);
+            _chapterPages[_novelChapter] = pages;
+            _novelPageLayoutPending = false;
+            ready(pages);
+        }
+        if (paginator.IsPageCountValid)
+        {
+            Apply();
+            return;
+        }
+        if (paginator is DynamicDocumentPaginator dynamicPaginator)
+        {
+            _waitingNovelPaginator = dynamicPaginator;
+            _novelPaginationCompleted = (_, _) =>
+            {
+                if (version != _novelPaginationVersion) return;
+                dynamicPaginator.PaginationCompleted -= _novelPaginationCompleted;
+                _waitingNovelPaginator = null;
+                _novelPaginationCompleted = null;
+                Dispatcher.BeginInvoke(DispatcherPriority.Loaded, (Action)Apply);
+            };
+            dynamicPaginator.PaginationCompleted += _novelPaginationCompleted;
+            dynamicPaginator.IsBackgroundPaginationEnabled = true;
+        }
+    }
+
+    private void GoToNovelPage()
+    {
+        if (_closed || _novelSubMode != "paged" || NovelPaged.Document is null) return;
+        // 持久化页索引从 0 开始，WPF 的 GoToPage 则从 1 开始。
+        // 直接传索引会让第一次翻页仍停在首页，并在接章时跳过当前章的最后一页。
+        NovelPaged.GoToPage(_novelPage + 1);
     }
 
     /// <summary>阅读进度里的 Mode 对小说是 "novel:paged" / "novel:scroll"；旧库可能是 "novel" 或空串。</summary>
@@ -1033,6 +1128,7 @@ public partial class ReaderWindow : Window
     private void ApplyNovelSubMode()
     {
         var doc = (NovelPaged.Document ?? NovelScroll.Document) as FlowDocument;
+        BeginNovelScrollRestore();
         NovelPaged.Document = null;
         NovelScroll.Document = null;
         if (_novelSubMode == "scroll")
@@ -1059,11 +1155,13 @@ public partial class ReaderWindow : Window
             if (doc is not null) NovelPaged.Document = doc;
             Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
             {
-                if (_closed) return;
-                int pages = _chapterPages.GetValueOrDefault(_novelChapter, 1);
-                _novelPage = Math.Clamp(_novelPage, 0, Math.Max(0, pages - 1));
-                NovelPaged.GoToPage(Math.Clamp(_novelPage, 0, pages - 1));
-                UpdateNovelInfo();
+                if (_closed || !ReferenceEquals(doc, NovelPaged.Document)) return;
+                WhenNovelPaginationReady(pages =>
+                {
+                    _novelPage = Math.Clamp(_novelPage, 0, pages - 1);
+                    GoToNovelPage();
+                    UpdateNovelInfo();
+                });
             });
         }
         StopAutoScroll();
@@ -1074,36 +1172,52 @@ public partial class ReaderWindow : Window
     /// LoadNovelChapter 执行（此时文档还没挂上），所以这里要一直重试到真正有滚动高度为止，
     /// 否则"上次读到一半"会被悄悄恢复成章首。
     /// </summary>
-    private void RestoreNovelScrollFraction(int attempt = 0)
+    private void BeginNovelScrollRestore()
+    {
+        CancelNovelPaginationWait();
+        _novelScrollRestoreVersion++;
+        _restoringNovelScrollPosition = _novelSubMode == "scroll";
+    }
+
+    private void RestoreNovelScrollFraction(int attempt = 0, int restoreVersion = -1)
     {
         if (_closed || _novel is null || _novelSubMode != "scroll") return;
-        if (_novelScrollFraction <= 0) return;          // 本来就在章首，无需滚动
+        if (restoreVersion < 0) restoreVersion = _novelScrollRestoreVersion;
+        if (restoreVersion != _novelScrollRestoreVersion) return;
         var sv = VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll);
-        if (sv is null)
+        if (sv is not null && sv.ScrollableHeight <= 0.5)
         {
-            if (attempt >= MaxScrollRestoreAttempts) return;
-            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () => RestoreNovelScrollFraction(attempt + 1));
-            return;
+            NovelScroll.UpdateLayout();
+            sv = VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll) ?? sv;
         }
-        if (sv.ScrollableHeight > 0.5)
-        {
-            sv.ScrollToVerticalOffset(_novelScrollFraction * sv.ScrollableHeight);
-            return;
-        }
-        // 文档已挂上但还没量完：强制跑一次布局，让 ScrollableHeight 变成有效值再滚，
-        // 比空转 30 个 100ms 的回合快得多，也更容易在断言等待窗口内落位。
-        NovelScroll.UpdateLayout();
-        sv = VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll) ?? sv;
-        if (sv.ScrollableHeight > 0.5)
+        if (sv is not null && (sv.ScrollableHeight > 0.5 || _novelScrollFraction <= 0 || attempt >= MaxScrollRestoreAttempts))
         {
             sv.ScrollToVerticalOffset(_novelScrollFraction * sv.ScrollableHeight);
+            // ScrollToVerticalOffset 的布局是延迟完成的：恢复期间不能把临时 0 偏移存回进度。
+            Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, () =>
+            {
+                if (_closed || _novelSubMode != "scroll" || restoreVersion != _novelScrollRestoreVersion) return;
+                _restoringNovelScrollPosition = false;
+                UpdateNovelInfo();
+            });
             return;
         }
-        if (attempt >= MaxScrollRestoreAttempts) return;
-        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () => RestoreNovelScrollFraction(attempt + 1));
+        if (attempt >= MaxScrollRestoreAttempts)
+        {
+            _restoringNovelScrollPosition = false;
+            return;
+        }
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () => RestoreNovelScrollFraction(attempt + 1, restoreVersion));
     }
 
     private const int MaxScrollRestoreAttempts = 30;
+
+    private void NovelScroll_ScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        if (_closed || !_interactionReady || _mode != "novel" || _novelSubMode != "scroll" ||
+            _restoringNovelScrollPosition || e.VerticalChange == 0) return;
+        UpdateNovelInfo();
+    }
 
     private void NovelMode_Changed(object sender, RoutedEventArgs e)
     {
@@ -1139,10 +1253,11 @@ public partial class ReaderWindow : Window
             UpdateNovelInfo();
             return;
         }
+        if (!HasValidNovelPagination()) return;
         if (_novelPage > 0)
         {
             _novelPage--;
-            NovelPaged.GoToPage(_novelPage);
+            GoToNovelPage();
         }
         else if (_novelChapter > 0)
         {
@@ -1164,13 +1279,14 @@ public partial class ReaderWindow : Window
             UpdateNovelInfo();
             return;
         }
-        int pages = _chapterPages.GetValueOrDefault(_novelChapter, 1);
+        if (!HasValidNovelPagination()) return;
+        int pages = ComputeChapterPages();
         if (_novelPage < pages - 1 || _novelChapter < _novel!.Chapters.Count - 1)
         {
             if (_novelPage < pages - 1)
             {
                 _novelPage++;
-                NovelPaged.GoToPage(_novelPage);
+                GoToNovelPage();
             }
             else
             {
@@ -1187,25 +1303,53 @@ public partial class ReaderWindow : Window
     {
         if (_novel is null) return;
         int chapters = _novel.Chapters.Count;
-        double fraction;
         if (_novelSubMode == "scroll")
         {
             var sv = VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll);
             // 注意：文档还没量出高度时不能把 _novelScrollFraction 归零——那时 VerticalOffset 恒为 0，
             // 归零会把刚从上一次阅读恢复出来的滚动位置直接抹掉（重开就回到章首）。
             // 只有视图真的可滚动时才用它的实际位置覆盖记录值。
-            if (sv is not null && sv.ScrollableHeight > 0.5)
+            if (!_restoringNovelScrollPosition && sv is not null && sv.ScrollableHeight > 0.5)
                 _novelScrollFraction = Math.Clamp(sv.VerticalOffset / sv.ScrollableHeight, 0, 1);
-            fraction = _novelScrollFraction;
         }
-        else
-        {
-            int pages = _chapterPages.GetValueOrDefault(_novelChapter, 1);
-            fraction = pages <= 1 ? 0 : (double)_novelPage / Math.Max(1, pages - 1);
-        }
+        double fraction = GetNovelChapterReadFraction(_novelScrollFraction);
         PageInfoText.Text = $"第 {_novelChapter + 1}/{chapters} 章 · 第 {_novelPage + 1} 页";
         SetSlider((_novelChapter + fraction) / chapters);
         ScheduleSave();
+    }
+
+    private bool HasStableNovelChapterLayout()
+    {
+        if (_closed || _novel is null || !NovelView.IsVisible) return false;
+        if (_novelSubMode == "scroll")
+        {
+            var sv = VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll);
+            return !_restoringNovelScrollPosition && NovelScroll.Document is not null && NovelScroll.IsVisible
+                && NovelScroll.IsMeasureValid && NovelScroll.IsArrangeValid
+                && sv is not null && sv.ViewportHeight > 0 && sv.ExtentHeight > 0;
+        }
+        return HasValidNovelPagination() && NovelPaged.IsVisible
+            && NovelPaged.IsMeasureValid && NovelPaged.IsArrangeValid && NovelPaged.ActualHeight > 0
+            && NovelPaged.PageCount > 0;
+    }
+
+    private bool HasValidNovelPagination()
+        => !_novelPageLayoutPending && NovelPaged.Document is IDocumentPaginatorSource source
+            && source.DocumentPaginator.IsPageCountValid;
+
+    private double GetNovelChapterReadFraction(double scrollFraction)
+    {
+        if (_novelSubMode == "scroll")
+        {
+            var sv = VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll);
+            // 整章已经完整显示在一屏内即算读完；恢复中的临时零高度不能用于判断。
+            if (HasStableNovelChapterLayout() && sv is not null && sv.ScrollableHeight <= 0.5) return 1;
+            return Math.Clamp(scrollFraction, 0, 1);
+        }
+        // ComputeChapterPages 在布局未完成时会回退为 1，必须检查真实分页已完成。
+        if (HasStableNovelChapterLayout() && NovelPaged.PageCount == 1) return 1;
+        int pages = ComputeChapterPages();
+        return pages > 1 ? Math.Clamp((double)_novelPage / (pages - 1), 0, 1) : 0;
     }
 
     private void LoadNovelSettingsUi()
@@ -1328,6 +1472,7 @@ public partial class ReaderWindow : Window
 
         var builder = new NovelDocumentBuilder(_imageResolver);
         var doc = builder.Build(_novel!.Chapters[_novelChapter], _novelSettings);
+        BeginNovelScrollRestore();
         NovelPaged.Document = null;
         NovelScroll.Document = null;
         NovelPaged.Document = doc;
@@ -1339,18 +1484,20 @@ public partial class ReaderWindow : Window
 
         Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
         {
-            int pages = ComputeChapterPages();
-            _chapterPages[_novelChapter] = pages;
+            if (_closed || !ReferenceEquals(doc, NovelPaged.Document ?? NovelScroll.Document)) return;
             if (_novelSubMode == "scroll")
             {
-                var sv = VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll);
-                if (sv is not null)
-                    sv.ScrollToVerticalOffset(fraction * Math.Max(0, sv.ScrollableHeight));
+                _novelScrollFraction = fraction;
+                RestoreNovelScrollFraction();
             }
             else
             {
-                _novelPage = Math.Min(pages - 1, (int)Math.Round(fraction * Math.Max(0, pages - 1)));
-                NovelPaged.GoToPage(_novelPage);
+                WhenNovelPaginationReady(pages =>
+                {
+                    _novelPage = (int)Math.Round(Math.Clamp(fraction, 0, 1) * (pages - 1));
+                    GoToNovelPage();
+                    UpdateNovelInfo();
+                });
             }
             UpdateNovelInfo();
         });
@@ -1370,7 +1517,7 @@ public partial class ReaderWindow : Window
             _novelSettings.TextColor = light ? lightText : darkText;
         SelectComboByTag(BgColorCombo, _novelSettings.Background);
         SelectComboByTag(TextColorCombo, _novelSettings.TextColor);
-        App.Settings.NovelSettings = _novelSettings;
+        // 主题只调整当前窗口的默认颜色，不能把本书的字号/字体等局部排版写成全局默认。
         if (rebuild)
             RebuildNovelDocumentNow();
     }
@@ -1559,7 +1706,7 @@ public partial class ReaderWindow : Window
             Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
             {
                 if (_novelSubMode == "paged")
-                    NovelPaged.GoToPage(_novelPage);
+                    GoToNovelPage();
             });
         }
     }
@@ -1589,10 +1736,10 @@ public partial class ReaderWindow : Window
             if (_novelSubMode == "scroll")
             {
                 var sv = VisualTreeHelpers.FindVisualChild<ScrollViewer>(NovelScroll);
-                scroll = sv is null || sv.ScrollableHeight <= 0 ? _novelScrollFraction : sv.VerticalOffset / sv.ScrollableHeight;
+                scroll = _restoringNovelScrollPosition || sv is null || sv.ScrollableHeight <= 0
+                    ? _novelScrollFraction : sv.VerticalOffset / sv.ScrollableHeight;
             }
-            double fraction = _novelSubMode == "scroll" ? scroll
-                : _chapterPages.TryGetValue(_novelChapter, out int pc) && pc > 1 ? (double)_novelPage / (pc - 1) : 0;
+            double fraction = GetNovelChapterReadFraction(scroll);
             percent = Math.Clamp((_novelChapter + fraction) / _novel.Chapters.Count, 0, 1);
         }
         else if (_loader is not null)
@@ -1698,10 +1845,12 @@ public partial class ReaderWindow : Window
             }
             else
             {
-                int pages = _chapterPages.GetValueOrDefault(_novelChapter, 1);
-                _novelPage = (int)Math.Round(withinChapter * Math.Max(0, pages - 1));
-                NovelPaged.GoToPage(_novelPage);
-                UpdateNovelInfo();
+                WhenNovelPaginationReady(pages =>
+                {
+                    _novelPage = (int)Math.Round(withinChapter * (pages - 1));
+                    GoToNovelPage();
+                    UpdateNovelInfo();
+                });
             }
         }
         else if (_loader is not null)
@@ -1733,6 +1882,7 @@ public partial class ReaderWindow : Window
         // 先保存（含模式/缩放），再标记关闭，避免 SaveNow 被提前拦截
         try { SaveNow(); } catch (Exception ex) { Log.Error("关闭时保存进度失败", ex); }
         _closed = true;
+        CancelNovelPaginationWait();
         _saveTimer.Stop();
         // _rebuildTimer 此前完全没停：关闭后 tick 仍会访问已销毁的控件
         _rebuildTimer?.Stop();

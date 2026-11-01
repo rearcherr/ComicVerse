@@ -37,15 +37,12 @@ public sealed class NaturalStringComparer : IComparer<string?>
                 return aNum ? -1 : 1; // 数字块排在文字块前
             }
 
-            // 剩下的块至少有一方不是数字（数字块若继续比下去，会比到 '/' '-' '.' 这些分隔符上，
-            // 再由分隔符的字符序决定顺序，结果就不再是「数值自然序」了）。
-            // 此时先把逐字相等的那部分比较完；一旦出现差异，就交给「块数少者优先」裁决：
-            //   ch1      vs ch1.2 / ch1.5 / ch1.10  -> ch1（正篇）在前
-            //   1        vs 1-1   / 1-2            -> 1（第 1 页）在前
-            //   10       vs 10a                    -> 10 在前
+            // 文字块按实际字面比较；块数仅在公共块完全相同时用于前缀比较。
+            // 不同文字却块数相同若一律返回 1，会导致 Compare(a,b) 与 Compare(b,a) 同号，
+            // 让压缩包和文件夹里的不同前缀页面乱序，甚至使排序器报比较器无效。
             int cmp = string.Compare(a, b, StringComparison.OrdinalIgnoreCase);
             if (cmp == 0) continue;
-            return xc.Count < yc.Count ? -1 : 1;
+            return cmp;
         }
         // 公共前缀完全相同、但一方还有剩余块：短的那个是更基础的名字，排在前面。
         if (xc.Count != yc.Count) return xc.Count < yc.Count ? -1 : 1;

@@ -172,6 +172,7 @@
                                               VerticalScrollBarVisibility="Auto"
                                               HorizontalScrollBarVisibility="Disabled"
                                               IsToolBarVisible="False"
+                                              ScrollViewer.ScrollChanged="NovelScroll_ScrollChanged"
                                               PreviewMouseWheel="NovelScroll_PreviewMouseWheel"/>
                 </Grid>
 

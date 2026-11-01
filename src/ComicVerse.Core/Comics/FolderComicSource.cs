@@ -12,13 +12,15 @@ public sealed class FolderComicSource : IComicSource
 
     public FolderComicSource(string folder, IEnumerable<string>? explicitFiles = null)
     {
-        SourcePath = folder;
+        SourcePath = Path.GetFullPath(folder);
         if (explicitFiles is not null)
         {
             _files = explicitFiles
                 .Where(ImageHelper.IsImageFile)
                 .OrderBy(f => Path.GetFileName(f), NaturalStringComparer.Instance)
                 .ToList();
+            // 单独打开的图片也是独立的书：同目录的 A.png / B.png 不能共享页 0 的缓存键。
+            if (_files.Count == 1) SourcePath = Path.GetFullPath(_files[0]);
         }
         else
         {
