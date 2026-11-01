@@ -107,6 +107,7 @@ public partial class ReaderWindow : Window
     internal void TestJumpToPage(int page) => LoadPageAsync(page);
     internal void TestWebtoonJumpTo(int page) => WebtoonView.ScrollToPage(page);
     internal void TestWebtoonDragDown(double dy) => WebtoonView.TestDragDown(dy);
+    internal (bool Ok, string Detail) TestWebtoonClickRelease() => WebtoonView.TestRoutedClickRelease();
     internal void TestSetRtl(bool rtl) => _rtl = rtl;
     internal int WebtoonCurrentPage => WebtoonView.CurrentPage;
 

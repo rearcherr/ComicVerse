@@ -45,6 +45,21 @@ public static class SmokeTest
         bool shelfEmptyOk = main.ShelfCount == 0 && main.EmptyHeadingText == "书架还是空的";
 
         var result = await App.Importer.ImportAsync(new[] { samplesDir });
+        if (args.Contains("--webtoon-input-only"))
+        {
+            var inputBook = App.Library.GetBooks(filter: "comic").First(b => b.Format == BookFormat.Cbz);
+            var inputReader = new ReaderWindow(inputBook) { ShowInTaskbar = false };
+            inputReader.Show();
+            var wait = System.Diagnostics.Stopwatch.StartNew();
+            while (!inputReader.IsWebtoonReady && wait.Elapsed < TimeSpan.FromSeconds(10)) await Task.Delay(100);
+            var check = inputReader.TestWebtoonClickRelease();
+            string inputSummary = $"条漫点击释放: {check.Ok} | {check.Detail}";
+            File.WriteAllText(Path.Combine(outDir, "input-summary.txt"), inputSummary);
+            Console.WriteLine(inputSummary);
+            inputReader.Close();
+            main.Close();
+            return check.Ok ? 0 : 1;
+        }
         // 现场生成一本 30 页长漫画，用于真实覆盖“进度条远距离跳页”
         string longCbz = CreateLongComic(outDir);
         var longResult = await App.Importer.ImportAsync(new[] { longCbz });
@@ -85,6 +100,8 @@ public static class SmokeTest
         bool farJumpOk = false;
         bool webtoonFarJumpOk = false;
         bool webtoonDragOk = false;
+        bool webtoonClickReleaseOk = false;
+        string webtoonClickDetail = "";
         bool webtoonHorizontalPanOk = false;
         bool webtoonProgressOk = false;
         bool webtoonModeReentryOk = false;
@@ -247,6 +264,9 @@ public static class SmokeTest
                 reader.TestSwitchToWebtoon();
                 await Task.Delay(1000);
                 webtoonModeReentryOk = Math.Abs(reader.CurrentPageNumber - reentryPage) <= 1;
+                var clickCheck = reader.TestWebtoonClickRelease();
+                webtoonClickReleaseOk = clickCheck.Ok;
+                webtoonClickDetail = clickCheck.Detail;
                 // 鼠标左键拖拽滑动：向下拖 180px，滚动偏移应同步上移约 180px
                 double beforeDrag = reader.WebtoonScrollOffset;
                 reader.TestWebtoonDragDown(180);
@@ -754,6 +774,7 @@ public static class SmokeTest
             $"不等高漫画翻页切条漫保持页码: {unequalWebtoonOk}\n" +
             $"条漫页间接缝检测（背景色行数）: {webtoonSeamRows}\n" +
             $"条漫鼠标拖拽滑动: {webtoonDragOk}\n" +
+            $"条漫单击释放鼠标（捕获控件事件路由）: {webtoonClickReleaseOk} — {webtoonClickDetail}\n" +
             $"条漫放大后横向平移: {webtoonHorizontalPanOk}（可滚动宽度 {webtoonHorizontalScrollableWidth:F0}px）\n" +
             $"条漫进度比例: {webtoonProgressOk} | 切出再回位置: {webtoonModeReentryOk}\n" +
             $"条漫方向键（← 上一页 / → 下一页）: {webtoonArrowOk} — {webtoonArrowDetail}\n" +
@@ -776,7 +797,7 @@ public static class SmokeTest
                shortNovelCompleteOk &&
                unequalWebtoonOk &&
                lightHeaderOk && shelfRefreshOk && webtoonSeamRows == 0 &&
-               webtoonDragOk &&
+               webtoonDragOk && webtoonClickReleaseOk &&
                webtoonHorizontalPanOk &&
                webtoonProgressOk && webtoonModeReentryOk &&
                webtoonArrowOk &&

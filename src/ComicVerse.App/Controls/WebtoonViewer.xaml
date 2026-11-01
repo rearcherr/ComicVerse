@@ -1,6 +1,10 @@
 <UserControl x:Class="ComicVerse.App.Controls.WebtoonViewer"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             PreviewMouseLeftButtonDown="OnPreviewMouseLeftButtonDown"
+             PreviewMouseMove="OnPreviewMouseMove"
+             PreviewMouseLeftButtonUp="OnPreviewMouseLeftButtonUp"
+             LostMouseCapture="OnLostMouseCapture">
     <Grid>
         <ScrollViewer x:Name="Scroll"
                       VerticalScrollBarVisibility="Auto"
@@ -9,10 +13,6 @@
                       PanningMode="Both"
                       ScrollChanged="OnScrollChanged"
                       PreviewMouseWheel="OnPreviewMouseWheel"
-                      PreviewMouseLeftButtonDown="OnPreviewMouseLeftButtonDown"
-                      PreviewMouseMove="OnPreviewMouseMove"
-                      PreviewMouseLeftButtonUp="OnPreviewMouseLeftButtonUp"
-                      LostMouseCapture="OnLostMouseCapture"
                       Background="{DynamicResource ReaderBgBrush}">
             <!-- UseLayoutRounding：让每页的位置与高度按设备像素取整，避免相邻页之间出现亚像素接缝（细白线） -->
             <Canvas x:Name="RootCanvas" Background="Transparent" UseLayoutRounding="True" SnapsToDevicePixels="True"/>

@@ -89,6 +89,8 @@ public partial class WebtoonViewer : UserControl
     public WebtoonViewer()
     {
         InitializeComponent();
+        Unloaded += (_, _) => EndDrag();
+        IsVisibleChanged += (_, _) => { if (!IsVisible) EndDrag(); };
         LayoutUpdated += (_, _) =>
         {
             if (_layoutReady && _dims.Count > 0 && Math.Abs(Scroll.ViewportWidth - _lastViewportWidth) > 1)
@@ -144,19 +146,37 @@ public partial class WebtoonViewer : UserControl
 
     // ---- 鼠标左键拖拽滑动（条漫）----
 
+    internal (bool Ok, string Detail) TestRoutedClickRelease()
+    {
+        // 使用真实 WPF 路由与捕获目标，不能直接设置拖动字段，否则会漏掉 MouseUp 收不到的问题。
+        RootCanvas.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left)
+        { RoutedEvent = Mouse.PreviewMouseDownEvent });
+        bool downSeen = _dragPressed;
+        bool capturedOnClick = IsMouseCaptured;
+        // 捕获在 UserControl 上时，MouseUp 路由从这里开始，不再经过子 ScrollViewer。
+        // 即使 CI 桌面不允许实际捕获，也必须检查这条路由，不能退回画布掩盖缺陷。
+        RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left)
+        { RoutedEvent = Mouse.PreviewMouseUpEvent });
+        bool released = !_dragPressed && !IsMouseCaptured;
+        string detail = $"downSeen={downSeen}, clickCaptured={capturedOnClick}, released={released}";
+        EndDrag(); // 失败时也释放捕获，避免让自检本身抢住鼠标。
+        return (downSeen && !capturedOnClick && released, detail);
+    }
+
     private void OnPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (!_layoutReady) return;
         // 点在滚动条（含滑块/空白轨道）上时交给 ScrollViewer 自己处理，不要抢，
         // 否则滚动条会拖不动，看起来像界面卡住
         if (IsFromScrollBar(e.OriginalSource as DependencyObject)) return;
+        CancelSmoothScroll();
         _dragPressed = true;
         _dragging = false;
         _dragStartY = e.GetPosition(this).Y;
         _dragStartX = e.GetPosition(this).X;
         _dragStartOffset = Scroll.VerticalOffset;
         _dragStartHorizontalOffset = Scroll.HorizontalOffset;
-        CaptureMouse();
+        // 单击不捕获鼠标；只有实际拖动时才捕获，避免普通点击影响其它控件。
     }
 
     private void OnPreviewMouseMove(object sender, MouseEventArgs e)
@@ -171,6 +191,13 @@ public partial class WebtoonViewer : UserControl
         double y = position.Y;
         if (!_dragging)
         {
+            if (Math.Abs(position.X - _dragStartX) < SystemParameters.MinimumHorizontalDragDistance
+                && Math.Abs(y - _dragStartY) < SystemParameters.MinimumVerticalDragDistance) return;
+            if (!CaptureMouse())
+            {
+                EndDrag();
+                return;
+            }
             _dragging = true;
             Cursor = Cursors.SizeAll;   // 拖动中的光标反馈
         }
@@ -189,7 +216,11 @@ public partial class WebtoonViewer : UserControl
         if (wasDragging) e.Handled = true;
     }
 
-    private void OnLostMouseCapture(object sender, MouseEventArgs e) => EndDrag();
+    private void OnLostMouseCapture(object sender, MouseEventArgs e)
+    {
+        // 子滚动条也会冒泡 LostMouseCapture，只处理本控件自己的捕获丢失。
+        if (ReferenceEquals(e.OriginalSource, this)) EndDrag();
+    }
 
     /// <summary>松手即停：不做惯性滑动，只有按住拖动时才移动内容。</summary>
     private void EndDrag()
