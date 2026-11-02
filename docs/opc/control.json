@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "updated_on": "2026-11-03",
+  "timezone": "Asia/Hong_Kong",
+  "execution_state": "candidate",
+  "activation_required": false,
+  "mode": "single_release",
+  "setup_scope": "authorized_product_iteration",
+  "active_cycle": "RELEASE-v1.3.2",
+  "last_outcome": "in_progress",
+  "team": {
+    "leader": "leader",
+    "configured_max_subagents": 8,
+    "runtime_concurrency_verified": true,
+    "roles": [
+      "market_research",
+      "user_research",
+      "product_planner",
+      "interaction_designer",
+      "tech_architect",
+      "core_engineer",
+      "desktop_engineer",
+      "qa_acceptance"
+    ],
+    "runtime_verification": "2026-11-03: leader spawned eight direct role agents; list_agents showed all eight running. Named-role native loading not claimed."
+  },
+  "defaults_for_future_activation": {
+    "max_cycles": 1,
+    "max_requirements_per_cycle": 3,
+    "time_budget_minutes": 120,
+    "max_qa_repair_rounds_per_cycle": 2,
+    "max_active_release_candidates": 1
+  },
+  "authorization": {
+    "product_development_started": false,
+    "scheduled_execution_enabled": false,
+    "user_desktop_takeover_allowed": false,
+    "remote_publish_policy": "follow_explicit_conversation_authorization",
+    "local_delivery_policy": "independent_qa_pass_and_identical_artifact"
+  },
+  "backlog": "docs/opc/BACKLOG.md",
+  "workflow": "docs/opc/WORKFLOW.md",
+  "templates": "docs/opc/TEMPLATES.md",
+  "cycle_history": [
+    {
+      "cycle": "CV-20261103-01",
+      "outcome": "qa_failed_repair_limit",
+      "record": "docs/opc/cycles/CV-20261103-01/run.md"
+    },
+    {
+      "cycle": "CV-20261103-02",
+      "outcome": "delivered",
+      "record": "docs/opc/cycles/CV-20261103-02/run.md",
+      "version": "1.3.2"
+    }
+  ],
+  "last_run": {
+    "cycle": "CV-20261103-02",
+    "started_at": "2026-11-03T01:00:48.8854634+08:00",
+    "deadline": "2026-11-03T03:00:48.8854634+08:00",
+    "max_cycles": 1,
+    "max_requirements": 1,
+    "time_budget_minutes": 120,
+    "max_qa_repair_rounds": 2,
+    "qa_repair_rounds_used": 1,
+    "scope": "Repair v1.3.2 blocked explicit navigation intent regression; preserve successful progress and PAX fixes; final identical-artifact local delivery",
+    "record": "docs/opc/cycles/CV-20261103-02/run.md",
+    "progress": "Complete: final independent QA and identical-artifact delivery verification PASS; local v1.3.2 delivered; real user value pending feedback; no remote publication.",
+    "ended_at": "2026-11-03T01:29:27.9003755+08:00",
+    "elapsed_minutes": 28.67,
+    "outcome": "delivered",
+    "delivered_version": "1.3.2",
+    "exe_sha256": "35AE398E9470B9AF639129C2AE7AF11B604422241F72768104A8DD74CD6AC20E",
+    "zip_sha256": "3AF65A824948D64632CA003DCD3691795B6CFA7CC9C77FE251C50418CFDE5355"
+  },
+  "active_release": {
+    "version": "1.3.2",
+    "started_at": "2026-11-03T01:37:00.4791939+08:00",
+    "authorization": "User explicitly requested 上传github吧",
+    "repository": "rearcherr/ComicVerse",
+    "branch": "main",
+    "tag": "v1.3.2",
+    "record": "docs/opc/releases/v1.3.2/run.md",
+    "approved_exe_sha256": "35AE398E9470B9AF639129C2AE7AF11B604422241F72768104A8DD74CD6AC20E",
+    "approved_zip_sha256": "3AF65A824948D64632CA003DCD3691795B6CFA7CC9C77FE251C50418CFDE5355",
+    "progress": "Independent publishing candidate PASS; approved same EXE full smoke112.19s/exit0, new freeze and assets match. Preparing Git commit/push; cloud CI and remote draft verification pending."
+  }
+}

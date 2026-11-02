@@ -1,118 +1,147 @@
 name: build-release
 
-on:
-  push:
-    tags: ['v*']
+# CI only creates a candidate for independent QA; tags never rebuild or publish it.
+"on":
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: candidate-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
+  candidate:
     runs-on: windows-latest
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: pwsh
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
 
-      - name: Resolve version from tag
-        shell: pwsh
+      - name: Record candidate version and source inputs
         run: |
-          $ref = "${{ github.ref_name }}"
-          $version = if ($ref -match '^v(\d+\.\d+\.\d+)$') { $Matches[1] } else { '' }
-          if (-not $version) {
-            $version = (Select-String -Path 'src/ComicVerse.App/ComicVerse.App.csproj' -Pattern '<Version>([^<]+)</Version>').Matches[0].Groups[1].Value
+          $ErrorActionPreference = 'Stop'
+          [xml]$taskProject = Get-Content -LiteralPath 'src/ComicVerse.App/ComicVerse.App.csproj' -Raw
+          $taskVersion = [string]$taskProject.Project.PropertyGroup.Version
+          if ($taskVersion -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') { throw 'Invalid source version.' }
+          "CV_VERSION=$taskVersion" | Out-File -LiteralPath $env:GITHUB_ENV -Encoding utf8 -Append
+          $taskRoot = Join-Path $env:RUNNER_TEMP "comicverse-ci-candidate-$($env:GITHUB_RUN_ID)-$($env:GITHUB_RUN_ATTEMPT)"
+          $taskEvidence = Join-Path $env:RUNNER_TEMP "comicverse-candidate-evidence-$($env:GITHUB_RUN_ID)-$($env:GITHUB_RUN_ATTEMPT)"
+          @("CV_CANDIDATE_DIR=$taskRoot", "CV_EVIDENCE_DIR=$taskEvidence") | Out-File -LiteralPath $env:GITHUB_ENV -Encoding utf8 -Append
+          New-Item -ItemType Directory -Path $taskRoot | Out-Null
+          $taskFiles = @(git -c core.quotepath=false ls-files -- src tests tools samples 'docs/使用说明.txt' LICENSE .github/workflows)
+          if ($LASTEXITCODE -ne 0 -or $taskFiles.Count -eq 0) { throw 'Cannot inventory candidate inputs.' }
+          $taskManifest = @($taskFiles | ForEach-Object {
+            [ordered]@{ Path = $_; Length = (Get-Item -LiteralPath $_).Length; SHA256 = (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash }
+          })
+          [ordered]@{ Commit = $env:GITHUB_SHA; Version = $taskVersion; Files = $taskManifest } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $taskRoot 'source-freeze.json') -Encoding utf8
+          Write-Output "Candidate version=$taskVersion; frozen inputs=$($taskManifest.Count)"
+
+      # One runner invocation per step preserves its real exit code.
+      - name: Build Core on isolated desktop
+        run: |
+          & './tools/Invoke-IsolatedProcess.ps1' -FilePath (Get-Command dotnet -CommandType Application).Source -ArgumentList @('build', 'src/ComicVerse.Core/ComicVerse.Core.csproj', '-c', 'Release', '--nologo', '-warnaserror') -EvidenceDirectory (Join-Path $env:CV_EVIDENCE_DIR 'build-core') -TimeoutSeconds 600
+          exit $LASTEXITCODE
+
+      - name: Build App on isolated desktop
+        run: |
+          & './tools/Invoke-IsolatedProcess.ps1' -FilePath (Get-Command dotnet -CommandType Application).Source -ArgumentList @('build', 'src/ComicVerse.App/ComicVerse.App.csproj', '-c', 'Release', '--nologo', '-warnaserror') -EvidenceDirectory (Join-Path $env:CV_EVIDENCE_DIR 'build-app') -TimeoutSeconds 600
+          exit $LASTEXITCODE
+
+      - name: Build tests on isolated desktop
+        run: |
+          & './tools/Invoke-IsolatedProcess.ps1' -FilePath (Get-Command dotnet -CommandType Application).Source -ArgumentList @('build', 'tests/ComicVerse.Tests/ComicVerse.Tests.csproj', '-c', 'Release', '--nologo', '-warnaserror') -EvidenceDirectory (Join-Path $env:CV_EVIDENCE_DIR 'build-tests') -TimeoutSeconds 600
+          exit $LASTEXITCODE
+
+      - name: Core tests on isolated desktop
+        run: |
+          & './tools/Invoke-IsolatedProcess.ps1' -FilePath (Join-Path $PWD 'tests/ComicVerse.Tests/bin/Release/net10.0-windows/ComicVerse.Tests.exe') -EvidenceDirectory (Join-Path $env:CV_EVIDENCE_DIR 'core-tests') -TimeoutSeconds 300
+          exit $LASTEXITCODE
+
+      - name: Publish candidate on isolated desktop
+        run: |
+          & './tools/Invoke-IsolatedProcess.ps1' -FilePath (Get-Command dotnet -CommandType Application).Source -ArgumentList @('publish', 'src/ComicVerse.App/ComicVerse.App.csproj', '-c', 'Release', '-r', 'win-x64', '--self-contained', 'true', '-p:PublishSingleFile=true', '-p:IncludeNativeLibrariesForSelfExtract=true', '-p:EnableCompressionInSingleFile=true', "-p:Version=$env:CV_VERSION", '--nologo', '-warnaserror', '-o', (Join-Path $env:CV_CANDIDATE_DIR 'publish')) -EvidenceDirectory (Join-Path $env:CV_EVIDENCE_DIR 'publish') -TimeoutSeconds 600
+          exit $LASTEXITCODE
+
+      - name: Package and unpack the CI candidate
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $taskRoot = $env:CV_CANDIDATE_DIR
+          $taskPackage = Join-Path $taskRoot 'package'
+          New-Item -ItemType Directory -Path $taskPackage | Out-Null
+          Copy-Item -LiteralPath (Join-Path $taskRoot 'publish/ComicVerse.exe') -Destination $taskPackage
+          Copy-Item -LiteralPath 'docs/使用说明.txt', 'LICENSE', 'samples' -Destination $taskPackage -Recurse
+          $taskZip = Join-Path $taskRoot "ComicVerse-Portable-v$($env:CV_VERSION)-win-x64.zip"
+          [IO.Compression.ZipFile]::CreateFromDirectory($taskPackage, $taskZip, [IO.Compression.CompressionLevel]::Optimal, $false)
+          $taskBundle = Join-Path $taskRoot 'smoke-bundle'
+          [IO.Compression.ZipFile]::ExtractToDirectory($taskZip, $taskBundle)
+          $taskExeHash = (Get-FileHash -LiteralPath (Join-Path $taskPackage 'ComicVerse.exe') -Algorithm SHA256).Hash
+          if ((Get-FileHash -LiteralPath (Join-Path $taskBundle 'ComicVerse.exe') -Algorithm SHA256).Hash -ne $taskExeHash) { throw 'ZIP EXE differs from candidate.' }
+          foreach ($taskRequired in @('ComicVerse.exe', '使用说明.txt', 'LICENSE', 'samples')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $taskBundle $taskRequired))) { throw "Missing package input: $taskRequired" }
           }
-          "CV_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
-          Write-Host "Version = $version"
+          [ordered]@{
+            Status = 'ci_candidate_requires_independent_qa'; Version = $env:CV_VERSION; Commit = $env:GITHUB_SHA
+            ExeSHA256 = $taskExeHash; ZipSHA256 = (Get-FileHash -LiteralPath $taskZip -Algorithm SHA256).Hash
+            SourceManifestSHA256 = (Get-FileHash -LiteralPath (Join-Path $taskRoot 'source-freeze.json') -Algorithm SHA256).Hash
+          } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $taskRoot 'candidate.json') -Encoding utf8
 
-      # 注意：不要用 `dotnet build ComicVerse.slnx`。
-      # 部分 .NET SDK 版本（实测 10.0.203）在 slnx 同时含 net10.0 与 net10.0-windows(UseWPF)
-      # 项目时会在 Restore 阶段以「0 Warning(s) 0 Error(s)」失败且无诊断，属 SDK/环境缺陷。
-      # 显式构建各 csproj 可绕开该缺陷，失败信息也更明确。
-      - name: Build
+      - name: Actual packaged App smoke on isolated desktop
         run: |
-          dotnet build src/ComicVerse.Core/ComicVerse.Core.csproj -c Release
-          dotnet build src/ComicVerse.App/ComicVerse.App.csproj -c Release
-          dotnet build tests/ComicVerse.Tests/ComicVerse.Tests.csproj -c Release
+          $taskBundle = Join-Path $env:CV_CANDIDATE_DIR 'smoke-bundle'
+          & './tools/Invoke-IsolatedProcess.ps1' -FilePath (Join-Path $taskBundle 'ComicVerse.exe') -ArgumentList @('--smoke', (Join-Path $taskBundle 'samples')) -EvidenceDirectory (Join-Path $env:CV_EVIDENCE_DIR 'ui-smoke') -TimeoutSeconds 300
+          exit $LASTEXITCODE
 
-      - name: Core tests
-        run: dotnet run --project tests/ComicVerse.Tests/ComicVerse.Tests.csproj -c Release --no-build
-
-      - name: Publish single-file exe
-        run: >
-          dotnet publish src/ComicVerse.App/ComicVerse.App.csproj
-          -c Release -r win-x64 --self-contained true
-          -p:PublishSingleFile=true
-          -p:IncludeNativeLibrariesForSelfExtract=true
-          -p:EnableCompressionInSingleFile=true
-          -p:Version=${{ env.CV_VERSION }}
-          -o publish
-
-      - name: UI smoke test (published exe)
-        shell: pwsh
+      - name: Verify smoke isolation and frozen bytes after execution
         run: |
-          $env:COMICVERSE_DATA_DIR = Join-Path $env:TEMP ('cv-ci-' + [guid]::NewGuid().ToString('N').Substring(0,8))
-          $env:SMOKE_OUT_DIR = Join-Path $env:TEMP 'cv-smoke-out'
-          & './publish/ComicVerse.exe' --smoke './samples'
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Package zip
-        shell: pwsh
-        run: |
-          # README 承诺「项目自带了样例资源（samples/ 目录）」，因此制品必须带上，
-          # 否则新用户解压后无书可读。docs 说明文件一并带上。
-          $stage = Join-Path $env:RUNNER_TEMP 'cv-stage'
-          if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
-          New-Item -ItemType Directory -Path $stage | Out-Null
-
-          Copy-Item './publish/ComicVerse.exe' $stage
-          Copy-Item './docs/使用说明.txt' $stage
-          Copy-Item './LICENSE' $stage
-          if (Test-Path './samples') {
-            Copy-Item './samples' $stage -Recurse
-          } else {
-            Write-Error 'samples/ 目录不存在，制品将缺少自带样例'
-            exit 1
+          $ErrorActionPreference = 'Stop'
+          $taskRoot = $env:CV_CANDIDATE_DIR
+          $taskEvidence = Join-Path $env:CV_EVIDENCE_DIR 'ui-smoke'
+          $taskStart = Get-Content -LiteralPath (Join-Path $taskEvidence 'execution-start.json') -Raw | ConvertFrom-Json
+          $taskResult = Get-Content -LiteralPath (Join-Path $taskEvidence 'execution-result.json') -Raw | ConvertFrom-Json
+          $taskApp = Get-Content -LiteralPath (Join-Path $taskEvidence 'smoke/smoke-environment.json') -Raw | ConvertFrom-Json
+          if ($taskResult.ExitCode -ne 0 -or $taskResult.TimedOut) { throw 'Candidate smoke failed or timed out.' }
+          if ($taskStart.Desktop -notlike 'ComicVerse-QA-*' -or $taskApp.Desktop -ne $taskStart.Desktop -or
+              $taskResult.Desktop -ne $taskStart.Desktop -or $taskApp.ProcessId -ne $taskStart.Pid -or
+              -not $taskApp.SmokeProcess -or ($taskApp.ErrorMode -band 0x8003) -ne 0x8003) { throw 'Actual App isolation evidence does not match the runner.' }
+          if (Test-Path -LiteralPath (Join-Path $taskEvidence 'smoke/smoke-crash.txt')) { throw 'Candidate recorded an unhandled exception.' }
+          $taskCandidate = Get-Content -LiteralPath (Join-Path $taskRoot 'candidate.json') -Raw | ConvertFrom-Json
+          if ((Get-FileHash -LiteralPath (Join-Path $taskRoot 'source-freeze.json') -Algorithm SHA256).Hash -ne $taskCandidate.SourceManifestSHA256) { throw 'Source manifest changed.' }
+          $taskManifest = Get-Content -LiteralPath (Join-Path $taskRoot 'source-freeze.json') -Raw | ConvertFrom-Json
+          foreach ($taskFile in $taskManifest.Files) {
+            if ((Get-FileHash -LiteralPath $taskFile.Path -Algorithm SHA256).Hash -ne $taskFile.SHA256) { throw "Input changed: $($taskFile.Path)" }
           }
-
-          Get-ChildItem $stage | Select-Object Name, Length
-
-          $zip = "ComicVerse-Portable-$($env:GITHUB_REF_NAME)-win-x64.zip"
-          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -CompressionLevel Optimal
-          Get-ChildItem -Filter 'ComicVerse-Portable-*' | Select-Object Name, Length
-
-      - name: Verify zip contents
-        shell: pwsh
-        run: |
-          $zip = "ComicVerse-Portable-$($env:GITHUB_REF_NAME)-win-x64.zip"
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $entries = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $zip)).Entries
-          $names = $entries | ForEach-Object { $_.FullName }
-          Write-Host "zip 条目数: $($entries.Count)"
-          $names | Sort-Object | Select-Object -First 40 | ForEach-Object { Write-Host "  $_" }
-
-          $hasExe    = $names -contains 'ComicVerse.exe'
-          # Compress-Archive 在 Windows 上写的是反斜杠分隔符（samples\xxx），
-          # 两种分隔符都要匹配，否则 CI 会误判制品校验失败。
-          $hasSamples= @($names | Where-Object { $_ -like 'samples/*' -or $_ -like 'samples\*' }).Count -gt 0
-          $hasDoc    = @($names | Where-Object { $_ -like '*.txt' }).Count -gt 0
-          $hasLicense= $names -contains 'LICENSE'
-          if (-not $hasExe -or -not $hasSamples -or -not $hasDoc -or -not $hasLicense) {
-            Write-Error "制品校验失败: exe=$hasExe samples=$hasSamples doc=$hasDoc license=$hasLicense"
-            exit 1
+          foreach ($taskExe in @('package/ComicVerse.exe', 'smoke-bundle/ComicVerse.exe')) {
+            if ((Get-FileHash -LiteralPath (Join-Path $taskRoot $taskExe) -Algorithm SHA256).Hash -ne $taskCandidate.ExeSHA256) { throw 'Candidate EXE changed.' }
           }
-          Write-Host "制品校验通过：exe=$hasExe samples=$hasSamples doc=$hasDoc"
+          $taskZip = Join-Path $taskRoot "ComicVerse-Portable-v$($env:CV_VERSION)-win-x64.zip"
+          if ((Get-FileHash -LiteralPath $taskZip -Algorithm SHA256).Hash -ne $taskCandidate.ZipSHA256) { throw 'Candidate ZIP changed.' }
+          Get-Content -LiteralPath (Join-Path $taskEvidence 'smoke/summary.txt')
 
-      - name: Upload to Release
-        uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Upload CI candidate for independent QA
+        uses: actions/upload-artifact@v4
         with:
-          files: |
-            ComicVerse-Portable-${{ github.ref_name }}-win-x64.zip
-            publish/ComicVerse.exe
+          name: comicverse-candidate-${{ env.CV_VERSION }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.CV_CANDIDATE_DIR }}/package/ComicVerse.exe
+            ${{ env.CV_CANDIDATE_DIR }}/ComicVerse-Portable-*.zip
+            ${{ env.CV_CANDIDATE_DIR }}/source-freeze.json
+            ${{ env.CV_CANDIDATE_DIR }}/candidate.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload all candidate isolation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: comicverse-candidate-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/comicverse-candidate-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 14

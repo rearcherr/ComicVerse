@@ -1,0 +1,282 @@
+[
+  {
+    "Path": "tools\\Invoke-IsolatedProcess.ps1",
+    "Hash": "4C6AA0867F7DFF1E41A6148F6A7DDD64E296A47BA0BF5561DA14C28289067868"
+  },
+  {
+    "Path": "tests\\ComicVerse.Tests\\TestProcessSafety.cs",
+    "Hash": "B5C6EA08C65247C4205070DA2D65E84739187ED5443632B3F08633D1DF5061E5"
+  },
+  {
+    "Path": "tests\\ComicVerse.Tests\\TestData.cs",
+    "Hash": "A3BFB84A38399A3E6018A6FB9927CF3877FF8EDF8F4D45C59FB2B66F84F1DC1F"
+  },
+  {
+    "Path": "tests\\ComicVerse.Tests\\Program.cs",
+    "Hash": "726EBD3B5740C60DF1E42A52E58568D1BEE1F464D28C51E5460C8925A8358900"
+  },
+  {
+    "Path": "tests\\ComicVerse.Tests\\ComicVerse.Tests.csproj",
+    "Hash": "0CE85B0EFD2E5064ACF5228A8475A11405053375446586FA87CA2FA95A50B82B"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\Services\\LibraryService.cs",
+    "Hash": "7D812A21C1D2B02E94AF3B9A575FD4A1FEEB9E27471AA232FD30D41B8A36348A"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\Services\\ImportService.cs",
+    "Hash": "4F8CABE69322BD461EE7C0BCED3045B10D7EAA1F8CD946B12B1042B1BE39B661"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\Services\\ImageCacheService.cs",
+    "Hash": "6282B50FCE8B16D789367818DE4A19657FAA5CDD506E94A0FF671EA928E8F34B"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\Services\\CoverGenerator.cs",
+    "Hash": "E18083B96035A2F9997C8911BBC062A6E53C9B7A70342BD6A75F3649B89AE84F"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\Services\\ComicImageLoader.cs",
+    "Hash": "ACD2501E1949E2A630826FEE6BADE74C07A69E65FAA3FD2FC54FAABD02D76547"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\Services\\AppSettingsService.cs",
+    "Hash": "4A8C5C17D99206EA1D6FCE32ED987FF9E65396FD2F262A12592EA7171E6EADCC"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\PdfNative.cs",
+    "Hash": "A14AA1B9BEF3801E66966FEC918A01A0ED28F35C6F0EB8757E3132213B01A790"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\ThemeService.cs",
+    "Hash": "63AC94FE0DB2D87CB83770F08E37AC11B26FAE90A9C026D18EB82D8AC29FA072"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\AssemblyInfo.cs",
+    "Hash": "3FAC2AF92385F676E9A941BEFD23FE38F0A5FA6167D4A3A88F07E730C5595CA3"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\App.xaml.cs",
+    "Hash": "4FB15CC37EA6D2146B0E88B4B99D15B7F3EE4B2B9753919B95BAA0638FABD452"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\App.xaml",
+    "Hash": "FB32A26CC8D8308B70A12E841D8EF2A0050978A7FDF3A10090DC0B0C7FE77162"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\App.SmokeSafety.cs",
+    "Hash": "6C6B5691BB00D26C0DE276150CD95719BC815A2EB7EC48A9746C414AF04750F6"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\app.manifest",
+    "Hash": "78EBA9E1D78463B6BA4786A400861E19AA9EC06A82B63D10216E87EDFFD9EAAE"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\ComicVerse.App.csproj",
+    "Hash": "DA801160E6FE4F18DF49C0DC377A7F713005D77AD1382386F290377BD99BD528"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\SmokeTest.NovelPreferences.cs",
+    "Hash": "26BA2373223AAA76F2CDA02084E0114775F2BBFBF2BCD4B8D6A637642EFE6F42"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\Windows\\SplashWindow.xaml.cs",
+    "Hash": "4DF0551E20D443A6E8DBC4A9E25CA99A10E107C881337DA38EC6C6AAF5B485EF"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\SmokeTest.NovelExpansion.cs",
+    "Hash": "189DF7E3448287CDBFA8AEE468843305C6D302E3CD5CF0DF1907143AE327F5AD"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\SmokeTest.LogicAudit.cs",
+    "Hash": "02BF05F370123C35158A3B34D440DCC08F2C34253779703C5623048C0FA29E8E"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\SmokeTest.cs",
+    "Hash": "F6E9C9A1E42052B68335C959943B912362391D95626CB9BBE2FB1433AEEFBAA6"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\Windows\\SplashWindow.xaml",
+    "Hash": "432A623227A6DD6E9541099B5EC1D2189AAFEFBFDCC847D82EC04A529FDF5F18"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\Windows\\SettingsWindow.xaml.cs",
+    "Hash": "45713753D6F0BC25589C998A7A0161CB57B415A6A674143699912FF79E6DED78"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\Windows\\SettingsWindow.xaml",
+    "Hash": "44D0ED7B783D06C1B2BD07EA10D23BDF199DD665045638125E172353C65F8F8C"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\Windows\\ReaderWindow.xaml.cs",
+    "Hash": "9CCDAE96E7D802B628B11E12204C132591EF33495CE63BAEA5A00E00CAA5130B"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\Windows\\ReaderWindow.xaml",
+    "Hash": "0536613BEBAAFC56C0FA4B617F7785E91A0CD511F37C6BED0F6FCA60E6445304"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\Windows\\ReaderWindow.NovelSearch.cs",
+    "Hash": "EBB9D1D0249B142E204E16B0CE69EA26683D068ACAB4870E6B0BEBCFFABAB23D"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\Windows\\ReaderWindow.NovelScroll.cs",
+    "Hash": "05BAE329282B60D34DB0ADB4C5D8307A4B04271D3F1DDB0E7238181642FAE04A"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\Fingerprint.cs",
+    "Hash": "D009341446AED6C7578CFB6682FF7578BC10A09EF365A07987E574F453DD81CA"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\EncodingDetector.cs",
+    "Hash": "DE5419072DCB8BCDB49918A65611D1A48769457A450009E231CDADDE96E8D843"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\ComicVerse.Core.csproj",
+    "Hash": "D4E2EC5740462FC23A4C45E7695CF7685C44A510D394035F4BC6D94A4A721EAD"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\Windows\\ReaderWindow.NovelPageLayout.cs",
+    "Hash": "9B9DAEC21C638F6BE867F7E69266979F823AC9412F65BDB3316CAAD44DD520E5"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\Windows\\ReaderWindow.ComicNavigation.cs",
+    "Hash": "E409BD192597A35903B20224DD246C6D5769E63975A6AF15AC999F0DD0AA05BC"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\Windows\\MainWindow.xaml.cs",
+    "Hash": "BCF94E4013EEF100A8DD344C3A7529B867C6723B73D95A7D1BEA7A4CE7257390"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\Windows\\MainWindow.xaml",
+    "Hash": "E4334ABC4EF9E8DB55D6E00595B433732249556BF40F86FF8728868B2F7CBCF0"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\Windows\\NovelSearchWindow.xaml",
+    "Hash": "67CF3BB2FEA0FD38C7738D7A19DA3285C13D4F4CC103F6AC7FD77D59D50B50D3"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\Windows\\NovelSearchWindow.xaml.cs",
+    "Hash": "FABCDBABC11FF8C8501E44747EF1EB2F02605216FAF95DAAFD196D5FAF15C822"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\Log.cs",
+    "Hash": "848E3E40CE6ACB5D51391827E8EBF3EA19A644933D85C1A6EE1B98B9BE9CBC3C"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\ImageHelper.cs",
+    "Hash": "F670AF8778E9B97A5C2588C8F8B635371BE03665AD0D031927A9B51A662CEA0F"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\Models.cs",
+    "Hash": "EF434C9C68D4E4E51ADFE6C405DC82E3BB425930075AFA16C0694A81F2775F0F"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\NaturalSort.cs",
+    "Hash": "52F2F37BD1AFE61B74AD629E7DE9D18E54DB48FDC4CE829EF2A3B42ACB49DCB9"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\Novel\\TxtParser.cs",
+    "Hash": "A1FB4A74EB04E164D903E8B8DAB09F8E44A930772B432B24785FEBA8D188E41B"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\Novel\\NovelTextSearch.cs",
+    "Hash": "90A5F54926CD867500A12EA875C3AC95330354B061425C7F53E821BCC12FEE4B"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\Novel\\NovelModels.cs",
+    "Hash": "A3762117F676BA3C09371B9212F694D558B2AF3893E5824B2097E4AF26626B72"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\Novel\\NovelDocumentBuilder.cs",
+    "Hash": "E3D498B6D52276AFEFD146F08CC6FB499D0D5B625433291C0B2B86108C339EA8"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\Novel\\EpubParser.cs",
+    "Hash": "5623B9C34641F81DF3AEB3FDE101E18D2AB0F37992700DE6074922E3974E25B8"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\Comics\\ZipComicSource.cs",
+    "Hash": "AF6166A6D95D7F49BCDCEF4891CCF3BA66FE0CAC662474A89FBC78F8A757DE83"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\Comics\\TarComicSource.cs",
+    "Hash": "9615808302DC3C927535CDA971A25A00F65A3981CFDFD924A930D1CF5D05D16A"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\Comics\\SevenZipComicSource.cs",
+    "Hash": "D2DAF3FC9292130E5AF7B88B9F999B63456A429C302E74983D28694485D399E8"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\Comics\\RarComicSource.cs",
+    "Hash": "97798A62B83C451A2DEB676E8E93392AEC564871A46EC0243842313C82560A12"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\Comics\\PdfNativeRenderer.cs",
+    "Hash": "FBC51E08F5AFF4529D41694C9B18C4A9F4319FC8017260AF35198015399C3107"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\Comics\\PdfComicSource.cs",
+    "Hash": "1C6890FEDD18E5FFF9E3043882CF3C44CDCA28FDBBD35C0E996E93E3428C6C3A"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\Comics\\PageReadGuard.cs",
+    "Hash": "26E8CA6D4C3BA1D759A8C94B00310A835E043006069521ACB2022A759BD8F64A"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\Comics\\IPageBitmapSource.cs",
+    "Hash": "06966929E6D1B8FB0919B9585FA307CAC763303E2CF1719A5DC9393DA86516A9"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\Comics\\IComicSource.cs",
+    "Hash": "F5E4914AAD29255B6D5CAC498C681CF0C5BEE24F2F3544D0ABBD1D3CEF7D666E"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\Comics\\FolderComicSource.cs",
+    "Hash": "E871A331CA1CAA5A06851C1A41FD2667FD050241700F2B60D512B6D81B7B35D6"
+  },
+  {
+    "Path": "src\\ComicVerse.Core\\Comics\\ComicSourceFactory.cs",
+    "Hash": "BE23B98E375004F411000641D8BCDA05229B0DF2360D764DECD6B6BC7ED1ADEA"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\Helpers\\VisualTreeHelpers.cs",
+    "Hash": "A73E3D0FCD852BE78B6C4CCA4A83FD4FAE8A41DE3C629195F75CF4F01DF44AD1"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\Helpers\\FileAssociations.cs",
+    "Hash": "D1939FEC75762C8DF428DB90DA6F6C7C41D96363614B93D64D99E4BA91F8C642"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\Helpers\\Converters.cs",
+    "Hash": "D6285CA574BC03EFB78BF1C0E42CEDFAE022566A19F8ACE980087C78D3C2B5A9"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\Assets\\appicon.png",
+    "Hash": "E07E2FDFF119A62D592100A270C1A54B71DE81443F894913DECB6DCB68F373D5"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\Assets\\appicon.ico",
+    "Hash": "2D803C0C9C6F3A711DCF63CD02DCC293CA8B7BBBA73F1947201A31A10371E3E2"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\Resources\\Styles.xaml",
+    "Hash": "5531BDE964FD9E7C9D4E22540BF36443865D7F0F4F4EC859EE2E34D98772B3B2"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\Resources\\LightTheme.xaml",
+    "Hash": "CD08038430CE43E6E16E08F442F0729D48A9E5A0544FB36B2EC99F94DCFCA756"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\Resources\\DarkTheme.xaml",
+    "Hash": "7AEE5B4F8CFBD55B3E8A735E17B144C4FA970888DF95BAD74237AF366CDD4F2D"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\Controls\\WebtoonViewer.xaml.cs",
+    "Hash": "BA81CE2E5C9C6136E6E480F0FC8C0CD629B713C595D8266DF8F058D336A6CFE8"
+  },
+  {
+    "Path": "src\\ComicVerse.App\\Controls\\WebtoonViewer.xaml",
+    "Hash": "5D3C86E081A188AB75C0C7CDD584C1A950D218F4A79D44CBB29F41A443F58DEE"
+  }
+]

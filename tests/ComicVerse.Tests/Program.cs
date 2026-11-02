@@ -12,7 +12,7 @@ using Microsoft.Data.Sqlite;
 
 namespace ComicVerse.Tests;
 
-public static class Program
+public static partial class Program
 {
     private static int _passed;
     private static int _failed;
@@ -67,6 +67,7 @@ public static class Program
             Run("编码检测", () => TestEncodingDetection(work));
             Run("ZIP/CBZ 漫画源", () => TestZipSource(samples.Cbz));
             Run("TAR/CBT 漫画源", () => TestTarSource(samples.Tar));
+            Run("PAX 长路径与 TAR 元数据边界", () => TestTarPaxReliability(work));
             Run("文件夹漫画源", () => TestFolderSource(samples.Folder));
             Run("伪 CBR 回退", () => TestFakeCbrFallback(work));
             Run("PDF 漫画源", () => TestPdfSource(samples.Pdf));

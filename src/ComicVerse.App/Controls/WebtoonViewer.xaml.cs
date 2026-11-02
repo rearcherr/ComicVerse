@@ -72,6 +72,12 @@ public partial class WebtoonViewer : UserControl
     internal int VisibleFirst => _visibleFirst;
     internal int VisibleLast => _visibleLast;
     internal double ScrollOffset => Scroll.VerticalOffset;
+    internal bool HasReachedPageOffset(int index)
+    {
+        if (!_layoutReady || index < 0 || index >= _tops.Count || Scroll.ViewportHeight <= 0) return false;
+        double target = Math.Clamp(_tops[index], 0, Math.Max(0, _total - Scroll.ViewportHeight));
+        return Math.Abs(Scroll.VerticalOffset - target) <= 1;
+    }
     internal double HorizontalOffset => Scroll.HorizontalOffset;
     internal double HorizontalScrollableWidth => Scroll.ScrollableWidth;
 

@@ -1,0 +1,17 @@
+{
+  "At": "2026-11-03T01:25:50.4452215+08:00",
+  "Candidate": "v1.3.2-rc2",
+  "Version": "1.3.2",
+  "Exe": "C:\\Users\\rearcher\\Documents\\New project\\publish\\ComicVerse.exe",
+  "ExeSHA256": "35AE398E9470B9AF639129C2AE7AF11B604422241F72768104A8DD74CD6AC20E",
+  "Zip": "C:\\Users\\rearcher\\Documents\\New project\\dist\\ComicVerse-Portable-v1.3.2-win-x64.zip",
+  "ZipSHA256": "3AF65A824948D64632CA003DCD3691795B6CFA7CC9C77FE251C50418CFDE5355",
+  "Instructions": "C:\\Users\\rearcher\\Documents\\New project\\publish\\使用说明.txt",
+  "InstructionsSHA256": "D780FC045480902BF818C8A5FB87214137B109F18ED857478308690C991F2D3E",
+  "ApprovedDecisionSHA256": "DE39534DCA9DE71A4A573D44EBD0A6ACA0A9E298AFAA85EBB31EB4ACF5A9A2E5",
+  "ClosedConfirmedProcessIds": [],
+  "FrozenInputCount": 105,
+  "Rebuilt": false,
+  "IndependentDeliveryVerification": "PASS",
+  "IndependentEvidence": "artifacts/opc-CV-20261103-02-qa-final/delivery-verification.json"
+}

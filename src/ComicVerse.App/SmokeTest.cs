@@ -60,6 +60,15 @@ public static partial class SmokeTest
         await Task.Delay(900);
         main.Refresh();
         bool shelfEmptyOk = main.ShelfCount == 0 && main.EmptyHeadingText == "书架还是空的";
+        if (args.Contains("--opc-reliability-only"))
+        {
+            var reliability = await CheckOpcReliabilityAsync(outDir);
+            string reliabilitySummary = $"OPC可靠性={reliability.Ok} — {reliability.Detail}";
+            File.WriteAllText(Path.Combine(outDir, "opc-reliability-summary.txt"), reliabilitySummary);
+            Console.WriteLine(reliabilitySummary);
+            main.Close();
+            return reliability.Ok ? 0 : 1;
+        }
         if (args.Contains("--logic-audit-only"))
         {
             var audit = await CheckLogicAuditAsync(main, outDir);
@@ -785,6 +794,7 @@ public static partial class SmokeTest
             lightHeaderOk = false;
         }
         var logicAudit = await CheckLogicAuditAsync(main, outDir);
+        var opcReliability = await CheckOpcReliabilityAsync(outDir);
         main.Close();
 
         string summary =
@@ -814,6 +824,7 @@ public static partial class SmokeTest
             $"小说排版重开恢复: {novelPreferences.Formatting} | 滚轮速度与跨章: {novelPreferences.Wheel} — {novelPreferences.Detail}\n" +
             $"独立QA：排版扩展={novelExpansion.Spacing} 正文查找={novelExpansion.Search} — {novelExpansion.Detail}\n" +
             $"独立QA：整体逻辑={logicAudit.Ok} — {logicAudit.Detail}\n" +
+            $"独立QA：OPC可靠性={opcReliability.Ok} — {opcReliability.Detail}\n" +
             $"不等高漫画翻页切条漫保持页码: {unequalWebtoonOk}\n" +
             $"条漫页间接缝检测（背景色行数）: {webtoonSeamRows}\n" +
             $"条漫鼠标拖拽滑动: {webtoonDragOk}\n" +
@@ -840,7 +851,7 @@ public static partial class SmokeTest
                shortNovelCompleteOk &&
                novelPreferences.Formatting && novelPreferences.Wheel &&
                novelExpansion.Spacing && novelExpansion.Search &&
-               logicAudit.Ok &&
+               logicAudit.Ok && opcReliability.Ok &&
                unequalWebtoonOk &&
                lightHeaderOk && shelfRefreshOk && webtoonSeamRows == 0 &&
                webtoonDragOk && webtoonClickReleaseOk &&

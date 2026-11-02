@@ -1,0 +1,20 @@
+[
+  {
+    "Name": "ComicVerse.exe",
+    "Path": "C:\\Users\\rearcher\\Documents\\New project\\artifacts\\github-v1.3.2-stage\\ComicVerse.exe",
+    "Bytes": 75049529,
+    "SHA256": "35AE398E9470B9AF639129C2AE7AF11B604422241F72768104A8DD74CD6AC20E"
+  },
+  {
+    "Name": "ComicVerse-Portable-v1.3.2-win-x64.zip",
+    "Path": "C:\\Users\\rearcher\\Documents\\New project\\artifacts\\github-v1.3.2-stage\\ComicVerse-Portable-v1.3.2-win-x64.zip",
+    "Bytes": 69699411,
+    "SHA256": "3AF65A824948D64632CA003DCD3691795B6CFA7CC9C77FE251C50418CFDE5355"
+  },
+  {
+    "Name": "ComicVerse-v1.3.2-approved-source.zip",
+    "Path": "C:\\Users\\rearcher\\Documents\\New project\\artifacts\\github-v1.3.2-stage\\ComicVerse-v1.3.2-approved-source.zip",
+    "Bytes": 773021,
+    "SHA256": "8CFD4E37C66EE179137ED7A593BFB75D8EE6B6FB49B30DB6F9C2326C3B15D124"
+  }
+]

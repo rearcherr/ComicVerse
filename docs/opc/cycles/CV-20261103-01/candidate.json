@@ -1,0 +1,43 @@
+{
+  "Cycle": "CV-20261103-01",
+  "Candidate": "v1.3.2-rc1",
+  "Version": "1.3.2",
+  "BaselineCommit": "3a892fd",
+  "CreatedAt": "2026-11-03T00:48:58.6492796+08:00",
+  "BuildArguments": [
+    "publish",
+    "src/ComicVerse.App/ComicVerse.App.csproj",
+    "-c",
+    "Release",
+    "-r",
+    "win-x64",
+    "--self-contained",
+    "true",
+    "--no-restore",
+    "-p:PublishSingleFile=true",
+    "-p:IncludeNativeLibrariesForSelfExtract=true",
+    "-p:EnableCompressionInSingleFile=true",
+    "-p:Version=1.3.2",
+    "-warnaserror",
+    "--nologo",
+    "-o",
+    "C:\\Users\\rearcher\\Documents\\New project\\artifacts\\opc-CV-20261103-01-candidate-rc1"
+  ],
+  "SourceFiles": 105,
+  "Entries": 13,
+  "SourceManifest": "C:\\Users\\rearcher\\Documents\\New project\\artifacts\\opc-CV-20261103-01-candidate-rc1\\source-freeze.json",
+  "ManifestSHA256": "BF1ADCE8B24057DB938CAE2DD678FC09AC11EA9DCFC8B60A583992BA156EE962",
+  "ExePath": "C:\\Users\\rearcher\\Documents\\New project\\artifacts\\opc-CV-20261103-01-candidate-rc1\\ComicVerse.exe",
+  "ExeSHA256": "03BCF249BC3916F2C3B500ECD6907CEEA5376074EDE53838169B932CD931B373",
+  "ZipPath": "C:\\Users\\rearcher\\Documents\\New project\\artifacts\\opc-CV-20261103-01-candidate-rc1\\ComicVerse-Portable-v1.3.2-win-x64.zip",
+  "ZipSHA256": "0CAC960AD3A1988EB09998128190D4D2D080F83BEC768217E90021669B138911",
+  "DevelopmentChecks": [
+    "Core40 passed",
+    "OPC independent integrated61 passed",
+    "Non-author architecture review clear"
+  ],
+  "FinalQA": "FAIL",
+  "Delivery": "withheld; formal version1.3.1 unchanged",
+  "RemotePublish": "not_authorized",
+  "DecisionEvidence": "artifacts/opc-CV-20261103-01-qa-final/qa-decision.json"
+}
