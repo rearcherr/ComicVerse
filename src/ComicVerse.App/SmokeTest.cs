@@ -22,6 +22,23 @@ public static partial class SmokeTest
                             ?? Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "samples"));
         string outDir = Environment.GetEnvironmentVariable("SMOKE_OUT_DIR") ?? Path.Combine(Path.GetTempPath(), "comicverse-smoke");
         Directory.CreateDirectory(outDir);
+        File.WriteAllText(Path.Combine(outDir, "smoke-environment.json"),
+            System.Text.Json.JsonSerializer.Serialize(App.GetSmokeProcessEnvironment()));
+        if (args.Contains("--verify-task-failure-exit"))
+        {
+            CreateUnobservedTaskForSafetyCheck();
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            await Task.Delay(1000);
+            return 2;
+        }
+        if (args.Contains("--verify-failure-exit"))
+        {
+            _ = System.Windows.Threading.Dispatcher.CurrentDispatcher.BeginInvoke(new Action(() =>
+                throw new InvalidOperationException("QA: intentional dispatcher failure to verify noninteractive exit")));
+            await Task.Delay(5000);
+            return 2; // Reaching this line means the fatal dispatcher error failed to stop the test.
+        }
 
         // 冒烟在自己进程里跑：任何未被捕获的异常（包括 DispatcherTimer 回调里的）都要落到磁盘，
         // 否则进程会静默退出、summary 完全不产出，排查时没有任何线索。
@@ -43,6 +60,15 @@ public static partial class SmokeTest
         await Task.Delay(900);
         main.Refresh();
         bool shelfEmptyOk = main.ShelfCount == 0 && main.EmptyHeadingText == "书架还是空的";
+        if (args.Contains("--logic-audit-only"))
+        {
+            var audit = await CheckLogicAuditAsync(main, outDir);
+            string auditSummary = $"整体逻辑={audit.Ok} — {audit.Detail}";
+            File.WriteAllText(Path.Combine(outDir, "logic-audit-summary.txt"), auditSummary);
+            Console.WriteLine(auditSummary);
+            main.Close();
+            return audit.Ok ? 0 : 1;
+        }
         if (args.Contains("--novel-expansion-only"))
         {
             var expansion = await CheckNovelExpansionAsync(outDir);
@@ -758,6 +784,7 @@ public static partial class SmokeTest
         {
             lightHeaderOk = false;
         }
+        var logicAudit = await CheckLogicAuditAsync(main, outDir);
         main.Close();
 
         string summary =
@@ -786,6 +813,7 @@ public static partial class SmokeTest
             $"短篇小说一屏读完（翻页/滚动）: {shortNovelCompleteOk}\n" +
             $"小说排版重开恢复: {novelPreferences.Formatting} | 滚轮速度与跨章: {novelPreferences.Wheel} — {novelPreferences.Detail}\n" +
             $"独立QA：排版扩展={novelExpansion.Spacing} 正文查找={novelExpansion.Search} — {novelExpansion.Detail}\n" +
+            $"独立QA：整体逻辑={logicAudit.Ok} — {logicAudit.Detail}\n" +
             $"不等高漫画翻页切条漫保持页码: {unequalWebtoonOk}\n" +
             $"条漫页间接缝检测（背景色行数）: {webtoonSeamRows}\n" +
             $"条漫鼠标拖拽滑动: {webtoonDragOk}\n" +
@@ -812,6 +840,7 @@ public static partial class SmokeTest
                shortNovelCompleteOk &&
                novelPreferences.Formatting && novelPreferences.Wheel &&
                novelExpansion.Spacing && novelExpansion.Search &&
+               logicAudit.Ok &&
                unequalWebtoonOk &&
                lightHeaderOk && shelfRefreshOk && webtoonSeamRows == 0 &&
                webtoonDragOk && webtoonClickReleaseOk &&
@@ -827,6 +856,10 @@ public static partial class SmokeTest
                doubleZoomRestored &&
                novelProgressOk && novelScrollChapterOk && novelLightThemeOk && novelRestoreOk && novelArrowOk ? 0 : 1;
     }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static void CreateUnobservedTaskForSafetyCheck()
+        => _ = Task.FromException(new InvalidOperationException("QA: intentional unobserved task failure"));
 
     private static async Task<bool> CheckShortNovelCompletionAsync(string outDir)
     {

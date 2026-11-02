@@ -50,24 +50,9 @@ public sealed class ImportService
     private async Task<ImportResult> ImportCoreAsync(IEnumerable<string> paths, IProgress<ImportProgress>? progress, CancellationToken ct)
     {
         var result = new ImportResult();
-        var list = paths
-            .Where(p => !string.IsNullOrWhiteSpace(p))
-            .Select(Path.GetFullPath)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        var work = new List<string>();
-        foreach (string path in list)
-        {
-            if (Directory.Exists(path))
-            {
-                work.AddRange(ExpandFolder(path));
-            }
-            else if (File.Exists(path))
-            {
-                work.Add(path);
-            }
-        }
+        // 即使信号量立即可用，也不能在调用者（通常是 UI）线程枚举输入/递归扫描目录。
+        // 所有待导入路径先展开完成，扫描取消时不会产生任何书库写入。
+        var work = await Task.Run(() => ExpandImportPaths(paths, result, ct), ct).ConfigureAwait(false);
 
         int total = work.Count;
         int done = 0;
@@ -99,41 +84,100 @@ public sealed class ImportService
 
     private static void Report(IProgress<ImportProgress>? progress, ImportProgress snapshot) => progress?.Report(snapshot);
 
-    private List<string> ExpandFolder(string folder)
+    private List<string> ExpandImportPaths(IEnumerable<string> paths, ImportResult result, CancellationToken ct)
+    {
+        var work = new List<string>();
+        var inputs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string rawPath in paths)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (string.IsNullOrWhiteSpace(rawPath)) continue;
+            try
+            {
+                string path = Path.GetFullPath(rawPath);
+                if (!inputs.Add(path)) continue;
+                if (Directory.Exists(path))
+                {
+                    foreach (string item in ExpandFolder(path, result, ct))
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        if (seen.Add(item)) work.Add(item);
+                    }
+                }
+                else if (File.Exists(path))
+                {
+                    if (seen.Add(path)) work.Add(path);
+                }
+                else
+                {
+                    result.Failed.Add(path + " — 路径不存在或无法访问");
+                }
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                Log.Error("扫描导入路径失败: " + rawPath, ex);
+                result.Failed.Add(rawPath + " — 扫描失败: " + ex.Message);
+            }
+        }
+        ct.ThrowIfCancellationRequested();
+        return work;
+    }
+
+    private List<string> ExpandFolder(string folder, ImportResult result, CancellationToken ct)
     {
         var files = new List<string>();
         try
         {
-            var all = Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories)
-                .Where(f => !Path.GetFileName(f).StartsWith('.') && !f.Contains("__MACOSX", StringComparison.OrdinalIgnoreCase))
-                .ToList();
-
-            var images = all.Where(ImageHelper.IsImageFile).ToList();
-            var novels = all.Where(f => IsNovelFile(f)).ToList();
-            var archives = all.Where(f => IsComicFile(Path.GetExtension(f).ToLowerInvariant())).ToList();
-            bool hasRootImages = images.Any(f => string.Equals(Path.GetDirectoryName(f), folder, StringComparison.OrdinalIgnoreCase));
+            var novels = new List<string>();
+            var archives = new List<string>();
+            int imageCount = 0;
+            bool hasRootImages = false;
+            ct.ThrowIfCancellationRequested();
+            foreach (string file in Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories))
+            {
+                ct.ThrowIfCancellationRequested();
+                if (Path.GetFileName(file).StartsWith('.') || file.Contains("__MACOSX", StringComparison.OrdinalIgnoreCase)) continue;
+                if (ImageHelper.IsImageFile(file))
+                {
+                    imageCount++;
+                    hasRootImages |= string.Equals(Path.GetDirectoryName(file), folder, StringComparison.OrdinalIgnoreCase);
+                }
+                else if (IsNovelFile(file)) novels.Add(file);
+                else if (IsComicFile(Path.GetExtension(file).ToLowerInvariant())) archives.Add(file);
+            }
+            ct.ThrowIfCancellationRequested();
 
             // 根目录就是图片 → 整个文件夹作为一本漫画；
             // 只有嵌套图片且夹内没有压缩包/PDF 时，同样按一本漫画导入（保持原有习惯）；
             // 夹内若有压缩包/PDF，则它们才是真正的书，不再把整个文件夹合并成一本
-            if (hasRootImages || (archives.Count == 0 && (images.Count > 0 || novels.Count == 0)))
+            if (hasRootImages || (archives.Count == 0 && (imageCount > 0 || novels.Count == 0)))
             {
                 files.Add(folder);
             }
 
             // 文件夹里的漫画压缩包 / PDF 各自作为一本书导入（此前会被整体忽略）
             foreach (var a in archives)
+            {
+                ct.ThrowIfCancellationRequested();
                 files.Add(a);
+            }
 
             // 文件夹里的 txt/epub 单独作为小说导入（混合格式自动识别）
             foreach (var n in novels)
+            {
+                ct.ThrowIfCancellationRequested();
                 files.Add(n);
+            }
         }
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             Log.Error("扫描文件夹失败: " + folder, ex);
+            result.Failed.Add(folder + " — 扫描文件夹失败: " + ex.Message);
         }
-        return files.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        return files;
     }
 
     private bool ImportOne(string path, ImportResult result)

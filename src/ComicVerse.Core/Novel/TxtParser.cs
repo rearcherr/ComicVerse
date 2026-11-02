@@ -14,6 +14,9 @@ public static class TxtParser
 
     public static NovelBook Parse(string text, string title)
     {
+        // Encoding.GetString 会保留文件 BOM 为文首 U+FEFF；它不是 Trim 可去除的空白，
+        // 留在这里会让第一章标题漏检。仅移除文首签名，正文中的 U+FEFF 保持原样。
+        if (text.Length > 0 && text[0] == '\uFEFF') text = text[1..];
         var book = new NovelBook { Title = title };
         var lines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
 

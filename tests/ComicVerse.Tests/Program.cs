@@ -74,6 +74,7 @@ public static class Program
             Run("PDF 远页渲染", () => TestPdfFarPage(samples.MultiPdf));
             Run("长漫画远距离跳页", () => TestFarJumpLoad(work));
             Run("TXT 章节解析", () => TestTxtParse(samples.TxtUtf8));
+            Run("TXT BOM 首章识别与正文保留", TestTxtBomChapterParsing);
             Run("EPUB 解析", () => TestEpubParse(samples.Epub));
             Run("指纹稳定", () => TestFingerprint(work, samples.Cbz));
             Run("封面生成", () => TestCoverGeneration(work));
@@ -83,10 +84,13 @@ public static class Program
             Run("书库与进度", () => TestLibrary(samples));
             Run("旧库重复路径迁移", TestLegacyDuplicateMigration);
             Run("并发导入串行化", () => TestConcurrentImportSingleFlight(samples));
+            Run("导入扫描后台执行与失败报告", () => TestImportScanBackground(work, samples));
+            Run("扫描取消不写库且允许重试", () => TestImportScanCancellation(work, samples));
             Run("取消导入保留阅读数据及已导入书籍", () => TestImportCancellationPreservesReadingData(work, samples));
             Run("刷新元数据保留新阅读进度", () => TestMetadataRefreshPreservesReadingData(work));
             Run("重置进度恢复未读状态", () => TestResetProgressUnread(work));
             Run("小说按书排版持久化与隔离", () => TestNovelSettingsPerBookPersistence(work));
+            Run("设置写入失败重试与并发一致性", () => TestSettingsWriteRetry(work));
             Run("小说正文跨章搜索与精确定位", TestNovelTextSearchLocations);
             Run("EPUB 正文搜索大小写与特殊字符", () => TestNovelTextSearchEpub(work));
             Run("小说正文搜索结果限制与取消", TestNovelTextSearchLimits);
@@ -421,6 +425,31 @@ public static class Program
         var book = TxtParser.Parse(enc.GetString(File.ReadAllBytes(path)), Path.GetFileNameWithoutExtension(path));
         Assert(book.Chapters.Count == 3, "TXT 章节数错误: " + book.Chapters.Count);
         Assert(book.Chapters[0].Blocks.Count >= 2, "TXT 第一章块数错误");
+    }
+
+    private static void TestTxtBomChapterParsing()
+    {
+        const string firstBody = "第一章正文甲，内嵌\uFEFF应保留。";
+        const string secondBody = "第二章正文乙。";
+        string source = "第一章 起点\n\n" + firstBody + "\n\n第二章 继续\n\n" + secondBody;
+        Encoding[] encodings =
+        {
+            new UTF8Encoding(false), new UTF8Encoding(true),
+            Encoding.Unicode, Encoding.BigEndianUnicode,
+            Encoding.UTF32, new UTF32Encoding(bigEndian: true, byteOrderMark: true)
+        };
+        foreach (var encoding in encodings)
+        {
+            byte[] bytes = encoding.GetPreamble().Concat(encoding.GetBytes(source)).ToArray();
+            var detected = EncodingDetector.Detect(bytes);
+            var book = TxtParser.Parse(detected.GetString(bytes), "BOM 回归");
+            Assert(book.Chapters.Count == 2 && book.Chapters[0].Title == "第一章 起点"
+                   && book.Chapters[1].Title == "第二章 继续",
+                $"{encoding.WebName}（BOM={encoding.GetPreamble().Length}）丢失了首章目录");
+            Assert(book.Chapters[0].Blocks.Any(b => b.Text == firstBody)
+                   && book.Chapters[1].Blocks.Any(b => b.Text == secondBody),
+                $"{encoding.WebName} 首章正文归属错误或正文内 U+FEFF 被删除");
+        }
     }
 
     private static void TestEpubParse(string path)
@@ -863,6 +892,76 @@ public static class Program
         }
     }
 
+    private static void TestSettingsWriteRetry(string work)
+    {
+        string db = Path.Combine(work, "settings-write-retry.db");
+        using var lib = new LibraryService(db);
+        long bookId = lib.UpsertBook(new Book
+        {
+            Title = "设置失败回归", FilePath = Path.Combine(work, "settings-retry.txt"),
+            Type = BookType.Novel, Format = BookFormat.Txt
+        });
+        var settings = new AppSettingsService(lib);
+        settings.Theme = "dark";
+        var original = new NovelViewSettings();
+        var changed = new NovelViewSettings
+        {
+            FontFamily = "SimSun", FontSize = 25, LineSpacing = 2, ParagraphSpacing = 40,
+            PageMargin = 180, TextColor = "#112233", Background = "#FFEECC"
+        };
+        Assert(settings.SaveNovelSettingsForBook(bookId, original), "排版测试初始保存失败");
+
+        using var injection = new SqliteConnection("Data Source=" + db);
+        injection.Open();
+        using var command = injection.CreateCommand();
+        const string rejectWrite = """
+            CREATE TRIGGER reject_setting_write BEFORE INSERT ON settings
+            BEGIN SELECT RAISE(ABORT, 'isolated recoverable settings write failure'); END;
+            """;
+        command.CommandText = rejectWrite;
+        command.ExecuteNonQuery();
+        settings.Theme = "light"; // 普通属性 setter 必须保留会话值且不向 UI 抛数据库异常。
+        bool saved = settings.SaveNovelSettingsForBook(bookId, changed);
+        Assert(!saved && settings.Theme == "light" && lib.GetSetting("theme") == "dark",
+            "写入失败未返回失败，或会话值/已落盘值不符合预期");
+        AssertNovelSettingsEqual(settings.GetNovelSettingsForBook(bookId), changed, "失败后没有保留本次会话的排版");
+        settings.Reload();
+        Assert(settings.Theme == "light", "重载设置抹掉了尚未落盘的会话值");
+        AssertNovelSettingsEqual(settings.GetNovelSettingsForBook(bookId), changed, "重载设置抹掉了尚未落盘的按书排版");
+
+        command.CommandText = "DROP TRIGGER reject_setting_write";
+        command.ExecuteNonQuery();
+        settings.Theme = "light"; // 值与缓存相同但先前写失败，必须重试。
+        Assert(settings.SaveNovelSettingsForBook(bookId, changed), "存储恢复后相同排版无法重试保存");
+        using (var reopened = new LibraryService(db))
+        {
+            var fresh = new AppSettingsService(reopened);
+            Assert(fresh.Theme == "light", "同值重试后全局设置仍未落盘");
+            AssertNovelSettingsEqual(fresh.GetNovelSettingsForBook(bookId), changed, "同值重试后按书排版仍未落盘");
+        }
+
+        // 已成功保存的相同值应报告成功；重新出现的写入故障不能使它误报为未保存。
+        command.CommandText = rejectWrite;
+        command.ExecuteNonQuery();
+        Assert(settings.SaveNovelSettingsForBook(bookId, changed), "已持久化的相同排版被误报为失败");
+        command.CommandText = "DROP TRIGGER reject_setting_write";
+        command.ExecuteNonQuery();
+
+        using var start = new ManualResetEventSlim();
+        var writes = Enumerable.Range(0, 4).Select(worker => Task.Run(() =>
+        {
+            start.Wait();
+            for (int i = 0; i < 20; i++)
+                settings.LastImportDir = Path.Combine(work, $"writer-{worker}-{i}");
+        })).ToArray();
+        start.Set();
+        Task.WaitAll(writes);
+        string sessionValue = settings.LastImportDir;
+        using var finalLibrary = new LibraryService(db);
+        var finalSettings = new AppSettingsService(finalLibrary);
+        Assert(finalSettings.LastImportDir == sessionValue, "并发设置写入导致最终数据库值与会话缓存不一致");
+    }
+
     private static void TestNovelTextSearchLocations()
     {
         var book = TxtParser.Parse("第一章 起点\n星海和星海\n\n远处的星海\n\n第二章 终点\n再见星海", "正文搜索样例");
@@ -967,6 +1066,53 @@ public static class Program
                 "页边距上下界未实际应用到文档");
             Assert(second.Margin.Top == paragraphSpacing, "段间距上下界未实际应用到正文段落");
         }
+    }
+
+    private static void TestImportScanBackground(string work, Samples samples)
+    {
+        using var lib = new LibraryService(Path.Combine(work, "scan-background.db"));
+        var importer = new ImportService(lib);
+        int callerThread = Environment.CurrentManagedThreadId;
+        var scanThreads = new List<int>();
+        string missing = Path.Combine(work, "missing-during-scan.cbz");
+        IEnumerable<string> Paths()
+        {
+            scanThreads.Add(Environment.CurrentManagedThreadId);
+            yield return samples.Cbz;
+            scanThreads.Add(Environment.CurrentManagedThreadId);
+            yield return samples.Cbz; // 重复输入仍只导入一次。
+            scanThreads.Add(Environment.CurrentManagedThreadId);
+            yield return missing;
+            scanThreads.Add(Environment.CurrentManagedThreadId);
+            yield return Path.Combine(work, "invalid\0.cbz");
+        }
+        var result = importer.ImportAsync(Paths()).GetAwaiter().GetResult();
+        Assert(scanThreads.Count == 4 && scanThreads.All(thread => thread != callerThread),
+            "输入路径 MoveNext 在 ImportAsync 调用者线程执行，扫描仍会阻塞界面");
+        Assert(result.Imported == 1 && result.Updated == 0 && lib.GetBooks().Count == 1,
+            "后台扫描改变了去重或导入语义");
+        Assert(result.Failed.Count == 2 && result.Failed.Any(f => f.Contains("missing-during-scan.cbz"))
+               && result.Failed.Any(f => f.Contains("扫描失败")), "扫描异常或消失的路径被无声当作成功");
+    }
+
+    private static void TestImportScanCancellation(string work, Samples samples)
+    {
+        using var lib = new LibraryService(Path.Combine(work, "scan-cancellation.db"));
+        var importer = new ImportService(lib);
+        using var cancel = new CancellationTokenSource();
+        IEnumerable<string> Paths()
+        {
+            yield return samples.Cbz;
+            cancel.Cancel(); // 第一个路径已展开，尚未完成输入枚举；不得已经开始导入第一本。
+            yield return samples.Tar;
+        }
+        bool canceled = false;
+        try { importer.ImportAsync(Paths(), ct: cancel.Token).GetAwaiter().GetResult(); }
+        catch (OperationCanceledException) { canceled = true; }
+        Assert(canceled && lib.GetBooks().Count == 0, "扫描取消被吞掉，或扫描完成前就写入了书籍");
+        var resumed = importer.ImportAsync(new[] { samples.Cbz }).GetAwaiter().GetResult();
+        Assert(resumed.Imported == 1 && resumed.Failed.Count == 0 && lib.GetBooks().Count == 1,
+            "扫描取消后门闩未释放，后续导入失败");
     }
 
     private static void TestLegacyDuplicateMigration()

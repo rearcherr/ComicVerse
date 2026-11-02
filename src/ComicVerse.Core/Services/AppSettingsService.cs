@@ -7,14 +7,16 @@ namespace ComicVerse.Core.Services;
 /// <summary>
 /// 应用设置：主题、缓存、阅读偏好等，存于 SQLite settings 表。
 /// 构造时一次性把 settings 表读进内存字典：读取从此不再碰 SQLite（都是 UI 线程同步调用，
-/// 原先每读一个设置就是一次数据库往返）。写入先更新内存再落库，落库失败只记日志，
-/// 保证拖动"缓存上限"滑杆时不会因为逐帧 upsert（WAL + synchronous=FULL）卡住 UI 线程。
+/// 原先每读一个设置就是一次数据库往返）。写入先更新会话缓存再落库，失败保留待保存标记，
+/// 相同值可重试；数据库写入串行执行，但读取缓存不等待数据库 I/O。
 /// </summary>
 public sealed class AppSettingsService
 {
     private readonly LibraryService _library;
     private readonly Dictionary<string, string> _cache = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _dirtyKeys = new(StringComparer.Ordinal);
     private readonly object _lock = new();
+    private readonly object _writeGate = new();
 
     public AppSettingsService(LibraryService library)
     {
@@ -25,18 +27,26 @@ public sealed class AppSettingsService
     /// <summary>重新从数据库读取全部设置（外部直接改 settings 表后调用）。</summary>
     public void Reload()
     {
-        try
+        lock (_writeGate)
         {
-            var all = _library.GetSettings();
-            lock (_lock)
+            try
             {
-                _cache.Clear();
-                foreach (var kv in all) _cache[kv.Key] = kv.Value;
+                var all = _library.GetSettings();
+                lock (_lock)
+                {
+                    // 失败的会话值尚未落盘，不能在 Reload 时被旧数据库值抹掉。
+                    var pending = new Dictionary<string, string>(StringComparer.Ordinal);
+                    foreach (string key in _dirtyKeys)
+                        if (_cache.TryGetValue(key, out string? value)) pending[key] = value;
+                    _cache.Clear();
+                    foreach (var kv in all) _cache[kv.Key] = kv.Value;
+                    foreach (var kv in pending) _cache[kv.Key] = kv.Value;
+                }
             }
-        }
-        catch (Exception ex)
-        {
-            Log.Error("读取设置失败，使用默认值", ex);
+            catch (Exception ex)
+            {
+                Log.Error("读取设置失败，保留会话值或使用默认值", ex);
+            }
         }
     }
 
@@ -139,11 +149,12 @@ public sealed class AppSettingsService
     }
 
     /// <summary>只保存该书的完整排版，不改变其它书或全局默认。</summary>
-    public void SaveNovelSettingsForBook(long bookId, NovelViewSettings settings)
+    /// <returns>值已成功持久化时为 true；数据库写入失败时为 false，保留会话值供之后重试。</returns>
+    public bool SaveNovelSettingsForBook(long bookId, NovelViewSettings settings)
     {
         if (bookId <= 0) throw new ArgumentOutOfRangeException(nameof(bookId));
         ArgumentNullException.ThrowIfNull(settings);
-        Set(NovelSettingsBookKey(bookId), JsonSerializer.Serialize(settings));
+        return Set(NovelSettingsBookKey(bookId), JsonSerializer.Serialize(settings));
     }
 
     private static string NovelSettingsBookKey(long bookId)
@@ -163,21 +174,30 @@ public sealed class AppSettingsService
         }
     }
 
-    private void Set(string key, string value)
+    private bool Set(string key, string value)
     {
-        lock (_lock)
+        // 同一设置服务的缓存变更、持久化与 clean 提交共享顺序；不允许较旧写入覆盖较新会话值。
+        // 与 _lock 分开，避免写库阻塞时把正常缓存读取也锁住。
+        lock (_writeGate)
         {
-            if (_cache.TryGetValue(key, out var old) && old == value) return;   // 值没变就不写库
-            _cache[key] = value;
-        }
-        try
-        {
-            _library.SetSetting(key, value);
-        }
-        catch (Exception ex)
-        {
-            // 落库失败仍是"本次会话内生效"，下次启动会回到旧值；不应该让设置界面崩溃
-            Log.Error($"保存设置失败: {key}", ex);
+            lock (_lock)
+            {
+                if (_cache.TryGetValue(key, out var old) && old == value && !_dirtyKeys.Contains(key)) return true;
+                _cache[key] = value;
+                _dirtyKeys.Add(key);
+            }
+            try
+            {
+                _library.SetSetting(key, value);
+                lock (_lock) _dirtyKeys.Remove(key);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                // 会话内继续生效，保留 dirty 供同值重试；普通 UI 属性 setter 不向外抛写库异常。
+                Log.Error($"保存设置失败（可重试）: {key}", ex);
+                return false;
+            }
         }
     }
 }

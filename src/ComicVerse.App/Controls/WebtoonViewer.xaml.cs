@@ -39,6 +39,7 @@ public partial class WebtoonViewer : UserControl
     private double _dragStartHorizontalOffset;
 
     public event Action<int>? CurrentPageChanged;
+    public event Action? ReadingPositionChanged;
     public event Action? LayoutReady;
     public event Action<double>? ScaleChanged;
 
@@ -89,8 +90,22 @@ public partial class WebtoonViewer : UserControl
     public WebtoonViewer()
     {
         InitializeComponent();
-        Unloaded += (_, _) => EndDrag();
-        IsVisibleChanged += (_, _) => { if (!IsVisible) EndDrag(); };
+        Unloaded += (_, _) =>
+        {
+            EndDrag();
+            CancelSmoothScroll();
+            _resyncTimer?.Stop();
+            CancelAllLoads();
+        };
+        IsVisibleChanged += (_, _) =>
+        {
+            if (!IsVisible)
+            {
+                EndDrag();
+                CancelSmoothScroll();
+                _resyncTimer?.Stop();
+            }
+        };
         LayoutUpdated += (_, _) =>
         {
             if (_layoutReady && _dims.Count > 0 && Math.Abs(Scroll.ViewportWidth - _lastViewportWidth) > 1)
@@ -286,7 +301,7 @@ public partial class WebtoonViewer : UserControl
 
     private void SmoothTick(object? sender, EventArgs e)
     {
-        if (double.IsNaN(_scrollTarget)) return;
+        if (double.IsNaN(_scrollTarget)) { _smoothTimer?.Stop(); return; }
         double current = Scroll.VerticalOffset;
         double diff = _scrollTarget - current;
         if (Math.Abs(diff) < 0.5)
@@ -373,6 +388,7 @@ public partial class WebtoonViewer : UserControl
         if (!_layoutReady) return;
         UpdateVisible(_buildVersion);
         NotifyCurrent();
+        if (Math.Abs(e.VerticalChange) > 0.01) ReadingPositionChanged?.Invoke();
     }
 
     private void UpdateVisible(long version)

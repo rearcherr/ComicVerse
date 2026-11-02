@@ -25,6 +25,7 @@ public partial class App : Application
 
     protected override async void OnStartup(StartupEventArgs e)
     {
+        if (IsSmokeProcess) ConfigureSmokeErrorMode();
         base.OnStartup(e);
 
         // 全局异常兜底必须最先安装：项目里有 5 个 async void 入口，
@@ -66,6 +67,13 @@ public partial class App : Application
             Current.DispatcherUnhandledException += (_, ex) =>
             {
                 Log.Error("UI 线程未处理异常", ex.Exception);
+                if (IsSmokeProcess)
+                {
+                    RecordSmokeFailure(ex.Exception);
+                    ex.Handled = true;
+                    Current.Shutdown(1);
+                    return;
+                }
                 try
                 {
                     string logDir = Path.Combine(AppDataDir, "logs");
@@ -86,6 +94,11 @@ public partial class App : Application
         TaskScheduler.UnobservedTaskException += (_, ex) =>
         {
             Log.Error("未观察的 Task 异常", ex.Exception);
+            if (IsSmokeProcess)
+            {
+                RecordSmokeFailure(ex.Exception);
+                Environment.Exit(1);
+            }
             ex.SetObserved();
         };
     }

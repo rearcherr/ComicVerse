@@ -17,6 +17,28 @@ public partial class ReaderWindow
     private double? _novelWheelTarget;
     private readonly List<double> _novelWheelIssuedTargets = new();
 
+    private void InstallNovelManualInputHandlers()
+    {
+        // 常驻于正文控件，不能等第一次滚轮后才订阅；窗口快捷键已处理的键也算手动输入。
+        NovelScroll.AddHandler(Mouse.PreviewMouseDownEvent,
+            new MouseButtonEventHandler(NovelScroll_ManualMouseDown), handledEventsToo: true);
+        NovelScroll.AddHandler(Keyboard.PreviewKeyDownEvent,
+            new KeyEventHandler(NovelScroll_ManualKeyDown), handledEventsToo: true);
+        NovelScroll.AddHandler(UIElement.PreviewTouchDownEvent,
+            new EventHandler<TouchEventArgs>(NovelScroll_ManualTouchDown), handledEventsToo: true);
+    }
+
+    private void StopNovelAutoScrollForManualInput()
+    {
+        if (_mode != "novel" || _novelSubMode != "scroll") return;
+        StopAutoScroll();
+        ResetNovelWheelTarget();
+    }
+
+    private void NovelScroll_ManualMouseDown(object sender, MouseButtonEventArgs e) => StopNovelAutoScrollForManualInput();
+    private void NovelScroll_ManualKeyDown(object sender, KeyEventArgs e) => StopNovelAutoScrollForManualInput();
+    private void NovelScroll_ManualTouchDown(object? sender, TouchEventArgs e) => StopNovelAutoScrollForManualInput();
+
     private void NovelScroll_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
     {
         if (_mode != "novel" || _novelSubMode != "scroll") return;
@@ -42,9 +64,6 @@ public partial class ReaderWindow
             _novelWheelViewer = viewer;
             _novelWheelDocument = NovelScroll.Document;
             _novelWheelRestoreVersion = _novelScrollRestoreVersion;
-            viewer.PreviewMouseDown += NovelWheelExternalInput;
-            viewer.PreviewKeyDown += NovelWheelExternalInput;
-            viewer.PreviewTouchDown += NovelWheelExternalTouch;
         }
 
         double height = Math.Max(0, viewer.ScrollableHeight);
@@ -77,20 +96,11 @@ public partial class ReaderWindow
     /// <summary>换章、排版恢复和关窗时丢弃上一文档的未落地滚轮目标。</summary>
     private void ResetNovelWheelTarget()
     {
-        if (_novelWheelViewer is not null)
-        {
-            _novelWheelViewer.PreviewMouseDown -= NovelWheelExternalInput;
-            _novelWheelViewer.PreviewKeyDown -= NovelWheelExternalInput;
-            _novelWheelViewer.PreviewTouchDown -= NovelWheelExternalTouch;
-        }
         _novelWheelViewer = null;
         _novelWheelDocument = null;
         _novelWheelTarget = null;
         _novelWheelIssuedTargets.Clear();
     }
-
-    private void NovelWheelExternalInput(object sender, InputEventArgs e) => ResetNovelWheelTarget();
-    private void NovelWheelExternalTouch(object? sender, TouchEventArgs e) => ResetNovelWheelTarget();
 
     /// <summary>由真实 ScrollChanged 调用，区分本轮尚在落地的命令与滚动条/键盘等外部定位。</summary>
     private void ObserveNovelWheelScroll(ScrollChangedEventArgs e)

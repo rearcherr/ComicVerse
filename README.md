@@ -76,12 +76,16 @@ dotnet run --project tests/ComicVerse.Tests/ComicVerse.Tests.csproj -- --samples
 dotnet run --project tests/ComicVerse.Tests/ComicVerse.Tests.csproj
 ```
 
-UI 冒烟自检（独立数据目录，自动导入样例并打开三种漫画模式与小说阅读器，生成截图）：
+UI 冒烟自检（独立 Win32 Desktop 和数据目录，不切换桌面，生成离屏截图并记录退出码）：
 ```powershell
-$env:COMICVERSE_DATA_DIR = "$env:TEMP\cv-smoke"
-$env:SMOKE_OUT_DIR = "$env:TEMP\cv-smoke-out"
-dotnet run --project src/ComicVerse.App/ComicVerse.App.csproj -- --smoke .\samples
+& .\tools\Invoke-IsolatedProcess.ps1 `
+  -FilePath "$PWD\publish\ComicVerse.exe" `
+  -ArgumentList @('--smoke', "$PWD\samples") `
+  -EvidenceDirectory "$PWD\artifacts\qa-$(Get-Date -Format yyyyMMdd-HHmmss)" `
+  -TimeoutSeconds 300
 ```
+
+构建和新用例检查同样走该启动器；不要以移动到屏幕外的临时 WPF 宿主替代桌面隔离。自检异常写入日志并以失败码退出，不能当作通过。
 
 推送 `v*` 标签会自动触发 GitHub Actions 构建并发布免安装版制品到 Release。
 
@@ -122,6 +126,9 @@ dotnet run --project src/ComicVerse.App/ComicVerse.App.csproj -- --smoke .\sampl
 - [本轮问题、修复与验证范围](docs/质量检查与改进-2026-11-02.md)
 - [小说阅读器专项调研与后续建议](docs/小说阅读器调研与改进-2026-11-02.md)
 - [v1.3.0 独立 QA 验收记录](docs/QA验收-v1.3.0-2026-11-02.md)
+- [整体逻辑复核与修复](docs/整体逻辑复核与修复-2026-11-02.md)
+- [v1.3.1 独立 QA 验收记录](docs/QA验收-v1.3.1-2026-11-02.md)
+- [测试隔离与异常弹窗处理](docs/测试隔离与异常弹窗-2026-11-02.md)
 - 当前版本重点：小说精确排版、跨章正文查找，以及窗口重排后的页号与保存进度一致性；保留书架和漫画阅读的完整回归。
 
 ## 开源许可
