@@ -12,6 +12,29 @@
         Loaded="Window_Loaded"
         Closing="Window_Closing"
         PreviewMouseMove="Window_PreviewMouseMove">
+    <Window.Resources>
+        <Style x:Key="NovelSpacingInput" TargetType="TextBox" BasedOn="{StaticResource SearchTextBox}">
+            <Setter Property="Width" Value="64"/>
+            <Setter Property="TextAlignment" Value="Right"/>
+            <Setter Property="MaxLength" Value="8"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="bd" Background="{DynamicResource SurfaceAltBrush}"
+                                BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
+                                CornerRadius="{StaticResource ControlRadius}" Padding="6,4">
+                            <ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -41,6 +64,10 @@
                     </Button>
                     <Button x:Name="ChaptersButton" Style="{StaticResource IconButton}" ToolTip="章节目录" Click="ChaptersButton_Click" Visibility="Collapsed">
                         <TextBlock Text="&#xE8FD;" FontFamily="{StaticResource IconFont}" FontSize="15" Foreground="{DynamicResource TextPrimaryBrush}"/>
+                    </Button>
+                    <Button x:Name="NovelSearchButton" Style="{StaticResource IconButton}" ToolTip="查找正文 (Ctrl+F)"
+                            Click="NovelSearchButton_Click" Visibility="Collapsed">
+                        <TextBlock Text="&#xE721;" FontFamily="{StaticResource IconFont}" FontSize="15" Foreground="{DynamicResource TextPrimaryBrush}"/>
                     </Button>
                     <Button x:Name="SettingsPanelButton" Style="{StaticResource IconButton}" ToolTip="排版设置" Click="SettingsPanelButton_Click" Visibility="Collapsed">
                         <TextBlock Text="&#xE70F;" FontFamily="{StaticResource IconFont}" FontSize="15" Foreground="{DynamicResource TextPrimaryBrush}"/>
@@ -166,12 +193,14 @@
 
                 <Grid Grid.Column="1">
                     <FlowDocumentPageViewer x:Name="NovelPaged" Background="{DynamicResource ReaderBgBrush}"
-                                            Zoom="100"/>
+                                            IsInactiveSelectionHighlightEnabled="True" Zoom="100"
+                                            LayoutUpdated="NovelPaged_LayoutUpdated"/>
                     <FlowDocumentScrollViewer x:Name="NovelScroll" Visibility="Collapsed"
                                               Background="{DynamicResource ReaderBgBrush}"
                                               VerticalScrollBarVisibility="Auto"
                                               HorizontalScrollBarVisibility="Disabled"
                                               IsToolBarVisible="False"
+                                              IsInactiveSelectionHighlightEnabled="True"
                                               ScrollViewer.ScrollChanged="NovelScroll_ScrollChanged"
                                               PreviewMouseWheel="NovelScroll_PreviewMouseWheel"/>
                 </Grid>
@@ -201,13 +230,43 @@
                             <Slider x:Name="LineSpacingSlider" Minimum="1.2" Maximum="2.5" TickFrequency="0.1" Value="1.7"
                                     ValueChanged="NovelSettingSlider_Changed"/>
 
-                            <TextBlock Style="{StaticResource BodyText}" Text="段间距" Margin="0,14,0,2"/>
-                            <Slider x:Name="ParagraphSpacingSlider" Minimum="0" Maximum="24" TickFrequency="2" Value="8"
+                            <DockPanel Margin="0,14,0,2">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                    <TextBox x:Name="ParagraphSpacingInput" Style="{StaticResource NovelSpacingInput}"
+                                             Text="8" ToolTip="0–120，输入整数后按 Enter 或移开焦点应用"
+                                             TextChanged="NovelSpacingInput_TextChanged"
+                                             PreviewKeyDown="NovelSpacingInput_PreviewKeyDown"
+                                             LostKeyboardFocus="NovelSpacingInput_LostKeyboardFocus"/>
+                                    <TextBlock Text="像素" Foreground="{DynamicResource TextSecondaryBrush}"
+                                               VerticalAlignment="Center" Margin="6,0,0,0"/>
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource BodyText}" Text="段间距" VerticalAlignment="Center"/>
+                            </DockPanel>
+                            <Slider x:Name="ParagraphSpacingSlider" Minimum="0" Maximum="120" TickFrequency="1"
+                                    SmallChange="1" LargeChange="10" IsSnapToTickEnabled="True" Value="8"
                                     ValueChanged="NovelSettingSlider_Changed"/>
+                            <TextBlock x:Name="ParagraphSpacingInputMessage" FontSize="11" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource DangerBrush}" Visibility="Collapsed"/>
 
-                            <TextBlock Style="{StaticResource BodyText}" Text="页边距" Margin="0,14,0,2"/>
-                            <Slider x:Name="MarginSlider" Minimum="24" Maximum="120" TickFrequency="4" Value="56"
+                            <DockPanel Margin="0,14,0,2">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                    <TextBox x:Name="MarginInput" Style="{StaticResource NovelSpacingInput}"
+                                             Text="56" ToolTip="0–240，输入整数后按 Enter 或移开焦点应用"
+                                             TextChanged="NovelSpacingInput_TextChanged"
+                                             PreviewKeyDown="NovelSpacingInput_PreviewKeyDown"
+                                             LostKeyboardFocus="NovelSpacingInput_LostKeyboardFocus"/>
+                                    <TextBlock Text="像素" Foreground="{DynamicResource TextSecondaryBrush}"
+                                               VerticalAlignment="Center" Margin="6,0,0,0"/>
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource BodyText}" Text="页边距" VerticalAlignment="Center"/>
+                            </DockPanel>
+                            <Slider x:Name="MarginSlider" Minimum="0" Maximum="240" TickFrequency="1"
+                                    SmallChange="1" LargeChange="10" IsSnapToTickEnabled="True" Value="56"
                                     ValueChanged="NovelSettingSlider_Changed"/>
+                            <TextBlock x:Name="MarginInputMessage" FontSize="11" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource DangerBrush}" Visibility="Collapsed"/>
+                            <TextBlock Text="翻页时，上下边距会随窗口高度适当缩小" FontSize="11" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,4,0,0"/>
 
                             <TextBlock Style="{StaticResource BodyText}" Text="文字颜色" Margin="0,14,0,6"/>
                             <ComboBox x:Name="TextColorCombo" Style="{StaticResource ComboStyle}" SelectionChanged="NovelSetting_Changed">

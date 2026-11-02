@@ -87,6 +87,10 @@ public static class Program
             Run("刷新元数据保留新阅读进度", () => TestMetadataRefreshPreservesReadingData(work));
             Run("重置进度恢复未读状态", () => TestResetProgressUnread(work));
             Run("小说按书排版持久化与隔离", () => TestNovelSettingsPerBookPersistence(work));
+            Run("小说正文跨章搜索与精确定位", TestNovelTextSearchLocations);
+            Run("EPUB 正文搜索大小写与特殊字符", () => TestNovelTextSearchEpub(work));
+            Run("小说正文搜索结果限制与取消", TestNovelTextSearchLimits);
+            Run("小说排版段距边距上下界", TestNovelFormattingBounds);
             Run("书库并发访问", () => TestLibraryConcurrency(samples));
             Run("取尺寸只读头部", () => TestSizeProbe(work));
             Run("文件夹导入", () => TestFolderImport(work));
@@ -856,6 +860,112 @@ public static class Program
             var settings = new AppSettingsService(reopened);
             AssertNovelSettingsEqual(settings.GetNovelSettingsForBook(bookA), defaults, "损坏或空的按书 JSON 未安全回退全局默认");
             AssertNovelSettingsEqual(settings.GetNovelSettingsForBook(bookB), formatB, "A 小说排版损坏影响了 B 小说");
+        }
+    }
+
+    private static void TestNovelTextSearchLocations()
+    {
+        var book = TxtParser.Parse("第一章 起点\n星海和星海\n\n远处的星海\n\n第二章 终点\n再见星海", "正文搜索样例");
+        var result = NovelTextSearch.Search(book, "星海");
+        var expected = new[] { (0, 1, 0), (0, 1, 3), (0, 2, 3), (1, 1, 2) };
+        Assert(result.Matches.Count == expected.Length && !result.IsTruncated, "跨章中文命中数量错误");
+        for (int i = 0; i < expected.Length; i++)
+        {
+            var match = result.Matches[i];
+            var (chapter, block, start) = expected[i];
+            Assert(match.ChapterIndex == chapter && match.BlockIndex == block && match.Start == start && match.Length == 2,
+                "正文搜索顺序或字符坐标错误: " + i);
+            Assert(match.ChapterTitle == book.Chapters[chapter].Title && match.Preview.Contains("星海"),
+                "正文搜索缺少章节名或上下文摘要");
+            Assert(book.Chapters[chapter].Blocks[block].Text!.Substring(match.Start, match.Length) == "星海",
+                "搜索坐标无法定位回原始正文");
+        }
+    }
+
+    private static void TestNovelTextSearchEpub(string work)
+    {
+        string path = Path.Combine(work, "search-literal.epub");
+        TestData.MakeEpub(path, "搜索 EPUB", "测试", new List<(string, string)>
+        {
+            ("第一章", "<p>Alpha a+b[1](x).*? 中文🌌。</p><p>ALPHA</p>"),
+            ("第二章", "<p>alpha</p>")
+        });
+        var book = new EpubParser().Parse(path);
+        book.Chapters[0].Blocks.Add(new NovelBlock { ImageEntry = "alpha.png", Text = "alpha a+b[1](x).*?" });
+        var result = NovelTextSearch.Search(book, "aLpHa");
+        Assert(result.Matches.Count == 3 && result.Matches[0].ChapterIndex == 0
+               && result.Matches[1].ChapterIndex == 0 && result.Matches[2].ChapterIndex == 1,
+            "EPUB 忽略大小写或跳过图片块失败");
+        foreach (var match in result.Matches)
+            Assert(string.Equals(book.Chapters[match.ChapterIndex].Blocks[match.BlockIndex].Text!
+                .Substring(match.Start, match.Length), "alpha", StringComparison.OrdinalIgnoreCase),
+                "EPUB 搜索坐标不对应原始文本");
+        Assert(NovelTextSearch.Search(book, "a+b[1](x).*?").Matches.Count == 1,
+            "搜索把用户特殊字符当成正则表达式或错误匹配了图片块");
+        var chinese = NovelTextSearch.Search(book, "中文🌌");
+        Assert(chinese.Matches.Count == 1 && chinese.Matches[0].Length == 4,
+            "中文及补充平面字符搜索的 UTF-16 坐标错误");
+    }
+
+    private static void TestNovelTextSearchLimits()
+    {
+        var block = new NovelBlock { Text = new string('中', 501) };
+        var book = new NovelBook();
+        book.Chapters.Add(new NovelChapter { Title = "限制测试", Blocks = new List<NovelBlock> { block } });
+        var limited = NovelTextSearch.Search(book, "中", maxResults: 2);
+        Assert(limited.Matches.Count == 2 && limited.IsTruncated && limited.Matches[1].Start == 1,
+            "搜索未遵守结果上限或结果前缀不稳定");
+        Assert(NovelTextSearch.Search(book, "中").Matches.Count == 500
+               && NovelTextSearch.Search(book, "中").IsTruncated, "搜索默认结果上限不是 500");
+        block.Text = new string('中', 500);
+        var exact = NovelTextSearch.Search(book, "中");
+        Assert(exact.Matches.Count == 500 && !exact.IsTruncated, "恰好达到上限被误报为还有更多结果");
+        foreach (string? empty in new string?[] { null, "", " \t\r\n" })
+        {
+            var result = NovelTextSearch.Search(book, empty);
+            Assert(result.Matches.Count == 0 && !result.IsTruncated, "空查询未返回空结果");
+        }
+
+        block.Text = new string('x', 32767) + "针尖abc" + new string('x', 32768) + "针尖ABC";
+        var boundary = NovelTextSearch.Search(book, "针尖abc");
+        Assert(boundary.Matches.Count == 2 && boundary.Matches[0].Start == 32767
+               && boundary.Matches[1].Start == 65540, "分段扫描漏掉边界附近的命中");
+        block.Text = "aaaa";
+        var overlapping = NovelTextSearch.Search(book, "aa");
+        Assert(overlapping.Matches.Count == 2 && overlapping.Matches[0].Start == 0
+               && overlapping.Matches[1].Start == 2, "重复字符的非重叠搜索顺序错误");
+        Assert(NovelTextSearch.Search(book, "不存在").Matches.Count == 0, "不存在的查询返回了命中");
+
+        using var canceled = new CancellationTokenSource();
+        canceled.Cancel();
+        bool syncCanceled = false, asyncCanceled = false;
+        try { NovelTextSearch.Search(book, "aa", ct: canceled.Token); }
+        catch (OperationCanceledException) { syncCanceled = true; }
+        try { NovelTextSearch.SearchAsync(book, "aa", ct: canceled.Token).GetAwaiter().GetResult(); }
+        catch (OperationCanceledException) { asyncCanceled = true; }
+        Assert(syncCanceled && asyncCanceled, "同步或后台正文搜索没有遵守取消令牌");
+        var asyncResult = NovelTextSearch.SearchAsync(book, "aa").GetAwaiter().GetResult();
+        Assert(asyncResult.Matches.Count == 2, "后台搜索结果与同步搜索不一致");
+    }
+
+    private static void TestNovelFormattingBounds()
+    {
+        var chapter = new NovelChapter
+        {
+            Title = "排版边界", Blocks = new List<NovelBlock>
+            {
+                new() { Text = "第一段" }, new() { Text = "第二段" }
+            }
+        };
+        foreach (var (paragraphSpacing, pageMargin) in new[] { (0d, 0d), (120d, 240d) })
+        {
+            var document = new NovelDocumentBuilder().Build(chapter,
+                new NovelViewSettings { ParagraphSpacing = paragraphSpacing, PageMargin = pageMargin });
+            var second = document.Blocks.OfType<System.Windows.Documents.Paragraph>().Last();
+            Assert(document.PagePadding.Left == pageMargin && document.PagePadding.Top == pageMargin
+                   && document.PagePadding.Right == pageMargin && document.PagePadding.Bottom == pageMargin,
+                "页边距上下界未实际应用到文档");
+            Assert(second.Margin.Top == paragraphSpacing, "段间距上下界未实际应用到正文段落");
         }
     }
 

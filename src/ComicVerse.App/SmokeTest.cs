@@ -43,6 +43,15 @@ public static partial class SmokeTest
         await Task.Delay(900);
         main.Refresh();
         bool shelfEmptyOk = main.ShelfCount == 0 && main.EmptyHeadingText == "书架还是空的";
+        if (args.Contains("--novel-expansion-only"))
+        {
+            var expansion = await CheckNovelExpansionAsync(outDir);
+            string expansionSummary = $"排版扩展={expansion.Spacing} 正文查找={expansion.Search} — {expansion.Detail}";
+            File.WriteAllText(Path.Combine(outDir, "novel-expansion-summary.txt"), expansionSummary);
+            Console.WriteLine(expansionSummary);
+            main.Close();
+            return expansion.Spacing && expansion.Search ? 0 : 1;
+        }
 
         var result = await App.Importer.ImportAsync(new[] { samplesDir });
         if (args.Contains("--webtoon-input-only"))
@@ -667,6 +676,7 @@ public static partial class SmokeTest
         var novelPreferences = longNovelBook is null
             ? (Formatting: false, Wheel: false, Detail: "缺少长篇小说样例")
             : await CheckNovelPreferencesAsync(longNovelBook);
+        var novelExpansion = await CheckNovelExpansionAsync(outDir);
 
         // PDF 单独导入并打开（单文件发布时 pdfium.dll 需可被加载）
         string pdfPath = Directory.GetFiles(samplesDir, "*.pdf", SearchOption.AllDirectories).FirstOrDefault() ?? "";
@@ -775,6 +785,7 @@ public static partial class SmokeTest
             $"小说实际分页与章末接章: {novelActualPagingOk}（{novelActualPagingDetail}） | 章内滚动自动保存: {novelScrollAutosaveOk}\n" +
             $"短篇小说一屏读完（翻页/滚动）: {shortNovelCompleteOk}\n" +
             $"小说排版重开恢复: {novelPreferences.Formatting} | 滚轮速度与跨章: {novelPreferences.Wheel} — {novelPreferences.Detail}\n" +
+            $"独立QA：排版扩展={novelExpansion.Spacing} 正文查找={novelExpansion.Search} — {novelExpansion.Detail}\n" +
             $"不等高漫画翻页切条漫保持页码: {unequalWebtoonOk}\n" +
             $"条漫页间接缝检测（背景色行数）: {webtoonSeamRows}\n" +
             $"条漫鼠标拖拽滑动: {webtoonDragOk}\n" +
@@ -800,6 +811,7 @@ public static partial class SmokeTest
                novelActualPagingOk && novelScrollAutosaveOk &&
                shortNovelCompleteOk &&
                novelPreferences.Formatting && novelPreferences.Wheel &&
+               novelExpansion.Spacing && novelExpansion.Search &&
                unequalWebtoonOk &&
                lightHeaderOk && shelfRefreshOk && webtoonSeamRows == 0 &&
                webtoonDragOk && webtoonClickReleaseOk &&

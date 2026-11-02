@@ -1,0 +1,82 @@
+<Window x:Class="ComicVerse.App.Windows.NovelSearchWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="正文查找" Icon="/Assets/appicon.png"
+        Width="520" Height="620" MinWidth="420" MinHeight="380"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Background="{DynamicResource WindowBgBrush}" FontFamily="{StaticResource AppFont}"
+        PreviewKeyDown="Window_PreviewKeyDown">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <StackPanel Margin="0,0,0,14">
+            <TextBlock Text="正文查找" Style="{StaticResource SectionTitleText}"/>
+            <TextBlock x:Name="BookTitleText" Foreground="{DynamicResource TextSecondaryBrush}"
+                       FontSize="12" TextTrimming="CharacterEllipsis" Margin="0,6,0,0"/>
+        </StackPanel>
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <TextBox x:Name="QueryBox" Style="{StaticResource SearchTextBox}" TextChanged="QueryBox_TextChanged"
+                     ToolTip="查找书中正文，按 Enter 开始"/>
+            <Button Grid.Column="1" Content="查找" Style="{StaticResource AccentButton}"
+                    Click="Search_Click" Margin="10,0,0,0" MinWidth="70"/>
+        </Grid>
+        <Grid Grid.Row="2" Margin="0,12,0,12">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <TextBlock x:Name="StatusText" Text="输入关键词，查找整本书" FontSize="12"
+                       Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,10,0"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <Button x:Name="PreviousButton" Content="上一处" Style="{StaticResource BaseButton}"
+                        Click="Previous_Click" IsEnabled="False" Margin="0,0,6,0"/>
+                <Button x:Name="NextButton" Content="下一处" Style="{StaticResource BaseButton}"
+                        Click="Next_Click" IsEnabled="False"/>
+            </StackPanel>
+        </Grid>
+        <Border Grid.Row="3" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="1" CornerRadius="8">
+            <ListBox x:Name="ResultsList" Background="Transparent" BorderThickness="0" Padding="4"
+                     HorizontalContentAlignment="Stretch" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                     VirtualizingPanel.IsVirtualizing="True" SelectionChanged="Results_SelectionChanged"
+                     PreviewMouseLeftButtonDown="Results_PreviewMouseLeftButtonDown"
+                     PreviewMouseLeftButtonUp="Results_PreviewMouseLeftButtonUp">
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                        <Setter Property="Padding" Value="10"/>
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ListBoxItem">
+                                    <Border x:Name="bd" BorderBrush="Transparent" BorderThickness="1" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                                        <ContentPresenter/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="bd" Property="Background" Value="{DynamicResource SurfaceHoverBrush}"/></Trigger>
+                                        <Trigger Property="IsSelected" Value="True"><Setter TargetName="bd" Property="Background" Value="{DynamicResource AccentSoftBrush}"/></Trigger>
+                                        <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/></Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </ListBox.ItemContainerStyle>
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel>
+                            <TextBlock Text="{Binding ChapterTitle}" Foreground="{DynamicResource TextPrimaryBrush}"
+                                       FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                            <TextBlock Text="{Binding Preview}" Foreground="{DynamicResource TextSecondaryBrush}"
+                                       FontSize="12" TextWrapping="Wrap" LineHeight="19" MaxHeight="60" Margin="0,5,0,0"/>
+                        </StackPanel>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Border>
+        <TextBlock Grid.Row="4" Text="选择结果跳转到正文。在本查找窗口中：F3 下一处，Shift+F3 上一处。" FontSize="11"
+                   Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,10,0,0"/>
+    </Grid>
+</Window>

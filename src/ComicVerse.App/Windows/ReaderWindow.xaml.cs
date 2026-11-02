@@ -1,5 +1,6 @@
 using System.IO;
 using System.IO.Compression;
+using System.Globalization;
 using System.Text;
 using System.Threading;
 using System.Windows;
@@ -59,6 +60,8 @@ public partial class ReaderWindow : Window
     private NovelViewSettings _novelSettings = new();
     private bool _novelSettingsLoaded;
     private bool _novelSettingsDirty;
+    private bool _syncingNovelSpacingInputs;
+    private readonly HashSet<TextBox> _novelSpacingDrafts = new();
     private Encoding? _txtEncoding;
 
     private readonly DispatcherTimer _saveTimer;
@@ -270,6 +273,16 @@ public partial class ReaderWindow : Window
         SelectComboByTag(BgColorCombo, settings.Background);
     }
     internal void TestSetNovelMargin(double margin) => MarginSlider.Value = margin;
+    internal string NovelParagraphSpacingText => ParagraphSpacingInput.Text;
+    internal string NovelMarginText => MarginInput.Text;
+    internal string NovelParagraphSpacingMessage => ParagraphSpacingInputMessage.Text;
+    internal string NovelMarginMessage => MarginInputMessage.Text;
+    internal void TestSetNovelSpacingText(bool paragraph, string text, bool commit = true)
+    {
+        var input = paragraph ? ParagraphSpacingInput : MarginInput;
+        input.Text = text;
+        if (commit) CommitNovelSpacingInput(input, revertInvalid: false);
+    }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
@@ -373,6 +386,7 @@ public partial class ReaderWindow : Window
         ZoomOutButton.Visibility = ZoomInButton.Visibility = ZoomSlider.Visibility =
             ZoomText.Visibility = FitWidthButton.Visibility = FitPageButton.Visibility = ActualButton.Visibility = Visibility.Collapsed;
         ChaptersButton.Visibility = SettingsPanelButton.Visibility = Visibility.Visible;
+        NovelSearchButton.Visibility = Visibility.Visible;
 
         if (_book.Format == BookFormat.Epub)
         {
@@ -1075,9 +1089,12 @@ public partial class ReaderWindow : Window
         if (_novelSubMode == "paged" && NovelPaged.Document is IDocumentPaginatorSource source)
         {
             int pages = Math.Max(1, source.DocumentPaginator.PageCount);
-            if (source.DocumentPaginator.IsPageCountValid)
+            if (source.DocumentPaginator.IsPageCountValid && IsNovelPagePaddingCurrent())
+            {
                 _chapterPages[_novelChapter] = pages;
-            return pages;
+                return pages;
+            }
+            return _chapterPages.GetValueOrDefault(_novelChapter, pages);
         }
         return _chapterPages.GetValueOrDefault(_novelChapter, 1);
     }
@@ -1098,12 +1115,14 @@ public partial class ReaderWindow : Window
         if (_closed || _novelSubMode != "paged" || NovelPaged.Document is not IDocumentPaginatorSource source) return;
         var document = NovelPaged.Document;
         var paginator = source.DocumentPaginator;
+        EnsureNovelPagePadding();
         int version = _novelPaginationVersion;
         _novelPageLayoutPending = true;
         void Apply()
         {
             if (_closed || version != _novelPaginationVersion || _novelSubMode != "paged"
                 || !ReferenceEquals(document, NovelPaged.Document)) return;
+            EnsureNovelPagePadding();
             if (!paginator.IsPageCountValid)
             {
                 WhenNovelPaginationReady(ready);
@@ -1137,10 +1156,12 @@ public partial class ReaderWindow : Window
 
     private void GoToNovelPage()
     {
-        if (_closed || _novelSubMode != "paged" || NovelPaged.Document is null) return;
+        if (_closed || _novelSubMode != "paged" || NovelPaged.Document is not FlowDocument document) return;
+        RegisterNovelExplicitPageNavigation(document, _novelPage);
         // 持久化页索引从 0 开始，WPF 的 GoToPage 则从 1 开始。
         // 直接传索引会让第一次翻页仍停在首页，并在接章时跳过当前章的最后一页。
         NovelPaged.GoToPage(_novelPage + 1);
+        SettleNovelExplicitPageNavigation();
     }
 
     /// <summary>阅读进度里的 Mode 对小说是 "novel:paged" / "novel:scroll"；旧库可能是 "novel" 或空串。</summary>
@@ -1155,6 +1176,7 @@ public partial class ReaderWindow : Window
         NovelScroll.Document = null;
         if (_novelSubMode == "scroll")
         {
+            if (doc is not null) doc.PagePadding = new Thickness(_novelSettings.PageMargin);
             NovelScroll.Visibility = Visibility.Visible;
             NovelPaged.Visibility = Visibility.Collapsed;
             if (doc is not null) NovelScroll.Document = doc;
@@ -1196,6 +1218,7 @@ public partial class ReaderWindow : Window
     /// </summary>
     private void BeginNovelScrollRestore()
     {
+        CancelNovelPageNavigation();
         ResetNovelWheelTarget();
         CancelNovelPaginationWait();
         _novelScrollRestoreVersion++;
@@ -1260,11 +1283,13 @@ public partial class ReaderWindow : Window
     private void ChaptersButton_Click(object sender, RoutedEventArgs e)
     {
         ChapterPanel.Visibility = ChapterPanel.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+        if (ChapterPanel.Visibility == Visibility.Visible) SettingsPanel.Visibility = Visibility.Collapsed;
     }
 
     private void SettingsPanelButton_Click(object sender, RoutedEventArgs e)
     {
         SettingsPanel.Visibility = SettingsPanel.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+        if (SettingsPanel.Visibility == Visibility.Visible) ChapterPanel.Visibility = Visibility.Collapsed;
     }
 
     private void NovelPrev()
@@ -1277,6 +1302,7 @@ public partial class ReaderWindow : Window
             UpdateNovelInfo();
             return;
         }
+        SynchronizeNovelPageFactsNow();
         if (!HasValidNovelPagination()) return;
         if (_novelPage > 0)
         {
@@ -1303,6 +1329,7 @@ public partial class ReaderWindow : Window
             UpdateNovelInfo();
             return;
         }
+        SynchronizeNovelPageFactsNow();
         if (!HasValidNovelPagination()) return;
         int pages = ComputeChapterPages();
         if (_novelPage < pages - 1 || _novelChapter < _novel!.Chapters.Count - 1)
@@ -1359,7 +1386,7 @@ public partial class ReaderWindow : Window
 
     private bool HasValidNovelPagination()
         => !_novelPageLayoutPending && NovelPaged.Document is IDocumentPaginatorSource source
-            && source.DocumentPaginator.IsPageCountValid;
+            && source.DocumentPaginator.IsPageCountValid && IsNovelPagePaddingCurrent();
 
     private double GetNovelChapterReadFraction(double scrollFraction)
     {
@@ -1402,6 +1429,8 @@ public partial class ReaderWindow : Window
             LineSpacingSlider.Value = Math.Clamp(_novelSettings.LineSpacing, LineSpacingSlider.Minimum, LineSpacingSlider.Maximum);
             ParagraphSpacingSlider.Value = Math.Clamp(_novelSettings.ParagraphSpacing, ParagraphSpacingSlider.Minimum, ParagraphSpacingSlider.Maximum);
             MarginSlider.Value = Math.Clamp(_novelSettings.PageMargin, MarginSlider.Minimum, MarginSlider.Maximum);
+            SyncNovelSpacingInput(ParagraphSpacingSlider);
+            SyncNovelSpacingInput(MarginSlider);
             SelectComboByTag(TextColorCombo, _novelSettings.TextColor);
             SelectComboByTag(BgColorCombo, _novelSettings.Background);
             EncodingCombo.SelectedIndex = 0;
@@ -1440,8 +1469,10 @@ public partial class ReaderWindow : Window
         s.Background = NormalizeColor(s.Background, "#1A1A2E");
         s.FontSize = double.IsFinite(s.FontSize) ? Math.Clamp(s.FontSize, 12, 32) : 18;
         s.LineSpacing = double.IsFinite(s.LineSpacing) ? Math.Clamp(s.LineSpacing, 1.2, 2.5) : 1.7;
-        s.ParagraphSpacing = double.IsFinite(s.ParagraphSpacing) ? Math.Clamp(s.ParagraphSpacing, 0, 24) : 8;
-        s.PageMargin = double.IsFinite(s.PageMargin) ? Math.Clamp(s.PageMargin, 24, 120) : 56;
+        s.ParagraphSpacing = double.IsFinite(s.ParagraphSpacing)
+            ? Math.Round(Math.Clamp(s.ParagraphSpacing, 0, 120), MidpointRounding.AwayFromZero) : 8;
+        s.PageMargin = double.IsFinite(s.PageMargin)
+            ? Math.Round(Math.Clamp(s.PageMargin, 0, 240), MidpointRounding.AwayFromZero) : 56;
     }
 
     private static string NormalizeColor(string? value, string fallback)
@@ -1470,8 +1501,86 @@ public partial class ReaderWindow : Window
 
     private void NovelSettingSlider_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
+        SyncNovelSpacingInput(sender as Slider);
         if (_loadingNovelUi || !IsLoaded || _closed) return;
         NovelSetting_Changed(sender, new RoutedEventArgs());
+    }
+
+    private void SyncNovelSpacingInput(Slider? slider)
+    {
+        TextBox? input = ReferenceEquals(slider, ParagraphSpacingSlider) ? ParagraphSpacingInput
+            : ReferenceEquals(slider, MarginSlider) ? MarginInput : null;
+        TextBlock? message = ReferenceEquals(slider, ParagraphSpacingSlider) ? ParagraphSpacingInputMessage
+            : ReferenceEquals(slider, MarginSlider) ? MarginInputMessage : null;
+        if (slider is null || input is null) return;
+        _syncingNovelSpacingInputs = true;
+        try
+        {
+            input.Text = slider.Value.ToString("0", CultureInfo.InvariantCulture);
+            _novelSpacingDrafts.Remove(input);
+            if (message is not null)
+            {
+                message.Text = "";
+                message.Visibility = Visibility.Collapsed;
+            }
+        }
+        finally
+        {
+            _syncingNovelSpacingInputs = false;
+        }
+    }
+
+    private void NovelSpacingInput_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_syncingNovelSpacingInputs || _loadingNovelUi || !_novelSettingsLoaded || _closed) return;
+        var input = (TextBox)sender;
+        _novelSpacingDrafts.Add(input);
+        var message = ReferenceEquals(input, ParagraphSpacingInput) ? ParagraphSpacingInputMessage : MarginInputMessage;
+        message.Text = "";
+        message.Visibility = Visibility.Collapsed;
+        // 键入中的空值、负号或部分数字只是草稿；确认后才安排重排和持久化。
+    }
+
+    private bool CommitNovelSpacingInput(TextBox input, bool revertInvalid)
+    {
+        if (!_novelSettingsLoaded || _loadingNovelUi || _closed || !_novelSpacingDrafts.Contains(input)) return true;
+        var slider = ReferenceEquals(input, ParagraphSpacingInput) ? ParagraphSpacingSlider : MarginSlider;
+        var message = ReferenceEquals(input, ParagraphSpacingInput) ? ParagraphSpacingInputMessage : MarginInputMessage;
+        string range = $"{slider.Minimum:0}–{slider.Maximum:0}";
+        if (!int.TryParse(input.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int value))
+        {
+            if (revertInvalid)
+                SyncNovelSpacingInput(slider);
+            message.Text = revertInvalid ? $"已恢复为 {slider.Value:0}；请输入 {range} 的整数" : $"请输入 {range} 的整数";
+            message.Visibility = Visibility.Visible;
+            return false;
+        }
+        double accepted = Math.Clamp(value, slider.Minimum, slider.Maximum);
+        _novelSpacingDrafts.Remove(input);
+        slider.Value = accepted;
+        SyncNovelSpacingInput(slider);
+        if (accepted != value)
+        {
+            message.Text = $"已调整为 {accepted:0}（范围 {range}）";
+            message.Visibility = Visibility.Visible;
+        }
+        return true;
+    }
+
+    private void NovelSpacingInput_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter) return;
+        CommitNovelSpacingInput((TextBox)sender, revertInvalid: false);
+        e.Handled = true;
+    }
+
+    private void NovelSpacingInput_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+        => CommitNovelSpacingInput((TextBox)sender, revertInvalid: true);
+
+    private void CommitNovelSpacingDrafts()
+    {
+        foreach (var input in _novelSpacingDrafts.ToArray())
+            CommitNovelSpacingInput(input, revertInvalid: true);
     }
 
     private void RebuildNovel_Tick(object? sender, EventArgs e)
@@ -1498,8 +1607,9 @@ public partial class ReaderWindow : Window
         return true;
     }
 
-    private void FlushNovelSettingsIfDirty()
+    private void FlushNovelSettingsIfDirty(bool commitSpacingDrafts = false)
     {
+        if (commitSpacingDrafts) CommitNovelSpacingDrafts();
         if (!_novelSettingsLoaded || !_novelSettingsDirty || _novel is null || _closed) return;
         if (!ReadNovelSettingsFromUi() || !EnsureBookIdCurrent()) return;
         App.Settings.SaveNovelSettingsForBook(_book.Id, _novelSettings);
@@ -1593,6 +1703,7 @@ public partial class ReaderWindow : Window
 
     private async Task ReloadTxtAsync()
     {
+        CloseNovelSearch();
         longNovelTrack.Add($"ReloadTxtAsync 进入(旧ch={_novelChapter})");
         byte[] bytes = await Task.Run(() => File.ReadAllBytes(_book.FilePath));
         // 重新解析要占用几百毫秒，期间用户可能已经手动换章/关窗：
@@ -1601,6 +1712,7 @@ public partial class ReaderWindow : Window
         int keepChapter = _novelChapter;
         var parsed = TxtParser.Parse(_txtEncoding is null ? EncodingDetector.Detect(bytes).GetString(bytes) : _txtEncoding.GetString(bytes), _book.Title);
         if (_closed) return;
+        CloseNovelSearch(); // 编码重载期间若重新打开了查找，也不能保留旧解析对象的结果。
         _novel = parsed;
         ChapterList.ItemsSource = _novel.Chapters.Select((c, i) => $"{i + 1}. {c.Title}").ToList();
         _chapterPages.Clear();
@@ -1699,6 +1811,7 @@ public partial class ReaderWindow : Window
 
     private void AddBookmark_Click(object sender, RoutedEventArgs e)
     {
+        SynchronizeNovelPageFactsNow();
         // 双页模式下当前页是 _spreadStart，用 _page 会把书签存到进入双页之前的旧页
         int page = _mode == "novel" ? _novelPage
                  : _mode == "double" ? _spreadStart
@@ -1747,6 +1860,7 @@ public partial class ReaderWindow : Window
 
     private void SaveNow()
     {
+        SynchronizeNovelPageFactsNow();
         _saveTimer.Stop();
         if (_closed || _book.Id <= 0) return;
         // 书可能已在书架里被"移出"或重建：重新绑定到现存的行，否则进度会静默地永远存不进去
@@ -1906,12 +2020,14 @@ public partial class ReaderWindow : Window
 
     private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
     {
+        CloseNovelSearch();
         ResetNovelWheelTarget();
         // 关闭可能早于 350ms 重排防抖，先读控件的最后选择并保存该书排版。
-        try { FlushNovelSettingsIfDirty(); } catch (Exception ex) { Log.Error("关闭时保存小说排版失败", ex); }
+        try { FlushNovelSettingsIfDirty(commitSpacingDrafts: true); } catch (Exception ex) { Log.Error("关闭时保存小说排版失败", ex); }
         // 先保存（含模式/缩放），再标记关闭，避免 SaveNow 被提前拦截
         try { SaveNow(); } catch (Exception ex) { Log.Error("关闭时保存进度失败", ex); }
         _closed = true;
+        CancelNovelPageNavigation();
         CancelNovelPaginationWait();
         _saveTimer.Stop();
         // _rebuildTimer 此前完全没停：关闭后 tick 仍会访问已销毁的控件
@@ -1950,7 +2066,7 @@ public partial class ReaderWindow : Window
     private void Theme_Click(object sender, RoutedEventArgs e)
     {
         // 先保留尚未重排的用户改动，再做只影响显示的主题颜色转换。
-        FlushNovelSettingsIfDirty();
+        FlushNovelSettingsIfDirty(commitSpacingDrafts: true);
         ThemeService.Toggle();
         App.Settings.Theme = ThemeService.Current;
         ReaderThemeGlyph.Text = ThemeService.Current == "dark" ? "\uE708" : "\uE706";
@@ -1998,6 +2114,19 @@ public partial class ReaderWindow : Window
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (e.Key == Key.F && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        {
+            if (_interactionReady && _mode == "novel") OpenNovelSearch();
+            e.Handled = true;
+            return;
+        }
+        if (e.Key == Key.Escape && Keyboard.FocusedElement is TextBox spacingInput &&
+            (ReferenceEquals(spacingInput, ParagraphSpacingInput) || ReferenceEquals(spacingInput, MarginInput)))
+        {
+            SyncNovelSpacingInput(ReferenceEquals(spacingInput, ParagraphSpacingInput) ? ParagraphSpacingSlider : MarginSlider);
+            e.Handled = true;
+            return;
+        }
         if (!_interactionReady && e.Key != Key.Escape) return;
         bool inputFocused = IsKeyboardInputFocused();
         if (inputFocused && e.Key is not (Key.Escape or Key.Left or Key.Right)) return;
@@ -2118,6 +2247,7 @@ public partial class ReaderWindow : Window
         RtlButton.IsEnabled = ready;
         PrevButton.IsEnabled = NextButton.IsEnabled = ready;
         BookmarkButton.IsEnabled = ready;
+        NovelSearchButton.IsEnabled = ready;
         ProgressSlider.IsEnabled = ready;
     }
 
