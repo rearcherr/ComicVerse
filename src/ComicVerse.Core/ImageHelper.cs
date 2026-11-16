@@ -2,6 +2,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using ComicVerse.Core.Comics;
 
 namespace ComicVerse.Core;
 
@@ -48,7 +49,10 @@ public static class ImageHelper
     {
         try
         {
-            var frame = BitmapFrame.Create(stream, BitmapCreateOptions.DelayCreation, BitmapCacheOption.None);
+            // WPF 会异步缓冲非 seek 流；调用者返回后释放压缩条目会与其后台读取竞争。
+            // 先同步、限流地读入可 seek 内存，原始流仍由调用者持有和释放。
+            using var buffered = stream.CanSeek ? null : PageReadGuard.ReadToEnd(stream);
+            var frame = BitmapFrame.Create(buffered ?? stream, BitmapCreateOptions.DelayCreation, BitmapCacheOption.None);
             return (frame.PixelWidth, frame.PixelHeight);
         }
         catch

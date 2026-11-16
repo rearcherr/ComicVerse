@@ -125,6 +125,42 @@ jobs:
           if ((Get-FileHash -LiteralPath $taskZip -Algorithm SHA256).Hash -ne $taskCandidate.ZipSHA256) { throw 'Candidate ZIP changed.' }
           Get-Content -LiteralPath (Join-Path $taskEvidence 'smoke/summary.txt')
 
+      - name: Print packaged App smoke diagnostics
+        if: always()
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:CV_EVIDENCE_DIR)) {
+            Write-Output 'Smoke evidence root was not initialized.'
+            return
+          }
+          $taskEvidence = Join-Path $env:CV_EVIDENCE_DIR 'ui-smoke'
+          $taskFiles = @(
+            'execution-start.json', 'execution-result.json', 'stdout.log', 'stderr.log',
+            'smoke/smoke-environment.json', 'smoke/summary.txt', 'smoke/smoke-crash.txt',
+            'smoke/opc-reliability-summary.txt', 'smoke/logic-audit-summary.txt',
+            'smoke/novel-expansion-summary.txt', 'smoke/input-summary.txt'
+          )
+          # Treat evidence as plain text, never as runner workflow commands.
+          $taskLogToken = [guid]::NewGuid().ToString('N')
+          Write-Output "::stop-commands::$taskLogToken"
+          try {
+            foreach ($taskFile in $taskFiles) {
+              Write-Output "--- ui-smoke/$taskFile ---"
+              try {
+                $taskPath = Join-Path $taskEvidence $taskFile
+                if (Test-Path -LiteralPath $taskPath -PathType Leaf) {
+                  Get-Content -LiteralPath $taskPath -Encoding utf8 -ErrorAction Stop
+                } else {
+                  Write-Output '(not present)'
+                }
+              } catch {
+                Write-Output "(could not read: $($_.Exception.Message))"
+              }
+            }
+          } finally {
+            Write-Output "::$taskLogToken::"
+          }
+
       - name: Upload CI candidate for independent QA
         uses: actions/upload-artifact@v4
         with:
@@ -135,7 +171,7 @@ jobs:
             ${{ env.CV_CANDIDATE_DIR }}/source-freeze.json
             ${{ env.CV_CANDIDATE_DIR }}/candidate.json
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
 
       - name: Upload all candidate isolation evidence
         if: always()
@@ -144,4 +180,4 @@ jobs:
           name: comicverse-candidate-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/comicverse-candidate-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 30

@@ -21,6 +21,7 @@ public static partial class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        Console.OutputEncoding = Encoding.UTF8;
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
         if (args.Contains("--samples"))
@@ -98,6 +99,9 @@ public static partial class Program
             Run("小说排版段距边距上下界", TestNovelFormattingBounds);
             Run("书库并发访问", () => TestLibraryConcurrency(samples));
             Run("取尺寸只读头部", () => TestSizeProbe(work));
+            Run("非 seek 压缩图片尺寸与流所有权", () => TestImageDimensionCompressedStreams(work));
+            Run("非 seek 图片尺寸读取上限", TestImageDimensionReadLimit);
+            Run("图片尺寸 prefix 保持头部读取", TestImageDimensionPrefixReadLimit);
             Run("文件夹导入", () => TestFolderImport(work));
             Run("EPUB 正文无标签残留", () => TestEpubBodyHasNoTags(work));
             Run("EPUB href 变体", () => TestEpubHrefVariants(work));

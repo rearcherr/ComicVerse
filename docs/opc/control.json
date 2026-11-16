@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
-  "updated_on": "2026-11-03",
+  "updated_on": "2026-11-16",
   "timezone": "Asia/Hong_Kong",
-  "execution_state": "candidate",
-  "activation_required": false,
-  "mode": "single_release",
+  "execution_state": "standby",
+  "activation_required": true,
+  "mode": "single_cycle",
   "setup_scope": "authorized_product_iteration",
-  "active_cycle": "RELEASE-v1.3.2",
-  "last_outcome": "in_progress",
+  "active_cycle": null,
+  "last_outcome": "verified_fix_pr_open",
   "team": {
     "leader": "leader",
     "configured_max_subagents": 8,
@@ -84,5 +84,24 @@
     "approved_exe_sha256": "35AE398E9470B9AF639129C2AE7AF11B604422241F72768104A8DD74CD6AC20E",
     "approved_zip_sha256": "3AF65A824948D64632CA003DCD3691795B6CFA7CC9C77FE251C50418CFDE5355",
     "progress": "Independent publishing candidate PASS; approved same EXE full smoke112.19s/exit0, new freeze and assets match. Preparing Git commit/push; cloud CI and remote draft verification pending."
+  },
+  "current_run": {
+    "cycle": "CV-20261116-CI",
+    "started_at": "2026-11-16T15:34:50.4383091+08:00",
+    "max_cycles": 1,
+    "time_budget_minutes": 120,
+    "max_qa_repair_rounds": 2,
+    "scope": "Fix failed GitHub App smoke: non-seekable compressed image stream lifetime and durable CI diagnostics; no public release",
+    "record": "docs/opc/cycles/CV-20261116-CI/run.md",
+    "baseline": "078c75a7b1bd6552c07fef2f4150978a5b522eb1",
+    "commit": "df5ea7bd2c6b3ca698b89fcdd16825c5af1c3078",
+    "ci_runs": [
+      43825773730,
+      43825809001
+    ],
+    "pull_request": "https://github.com/rearcherr/ComicVerse/pull/2",
+    "outcome": "independent_qa_pass_pr_open",
+    "ended_at": "2026-11-16T15:59:25.3279528+08:00",
+    "qa_report": "docs/opc/cycles/CV-20261116-CI/qa-report.md"
   }
 }
