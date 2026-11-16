@@ -399,8 +399,30 @@
                 </StackPanel>
 
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="0,0,10,0" VerticalAlignment="Center">
-                    <TextBlock x:Name="PageInfoText" Text="1 / 1" FontSize="12" VerticalAlignment="Center"
-                               Foreground="{DynamicResource TextSecondaryBrush}"/>
+                    <Button x:Name="PageJumpButton" Click="PageJumpButton_Click" IsEnabled="False"
+                            Background="Transparent" Padding="4,6" Cursor="Hand"
+                            ToolTip="跳到指定页 (Ctrl+G)" AutomationProperties.Name="跳到指定页"
+                            AutomationProperties.AcceleratorKey="Ctrl+G">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="PageJumpButtonBorder" Background="{TemplateBinding Background}"
+                                        BorderBrush="Transparent" BorderThickness="1" CornerRadius="6"
+                                        Padding="{TemplateBinding Padding}">
+                                    <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="PageJumpButtonBorder" Property="Background" Value="{DynamicResource SurfaceHoverBrush}"/>
+                                    </Trigger>
+                                    <Trigger Property="IsKeyboardFocused" Value="True">
+                                        <Setter TargetName="PageJumpButtonBorder" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                        <TextBlock x:Name="PageInfoText" Text="1 / 1" FontSize="12" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource TextSecondaryBrush}"/>
+                    </Button>
                     <Slider x:Name="ProgressSlider" Width="280" Minimum="0" Maximum="1000" Value="0"
                             Margin="14,0,0,0" VerticalAlignment="Center"
                             ValueChanged="ProgressSlider_ValueChanged"
@@ -408,6 +430,37 @@
                             PreviewMouseUp="ProgressSlider_PreviewMouseUp"/>
                 </StackPanel>
             </DockPanel>
+        </Border>
+
+        <!-- 覆盖阅读区和工具栏；浮层外点击只取消草稿。 -->
+        <Border x:Name="PageJumpPanel" Grid.RowSpan="3" Panel.ZIndex="100" Background="#66000000"
+                Visibility="Collapsed" PreviewMouseDown="PageJumpPanel_PreviewMouseDown"
+                KeyboardNavigation.TabNavigation="Cycle" KeyboardNavigation.ControlTabNavigation="Cycle"
+                KeyboardNavigation.DirectionalNavigation="Contained" AutomationProperties.Name="跳到指定页">
+            <Border Width="360" Padding="24" HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
+                    BorderThickness="1" CornerRadius="12">
+                <StackPanel>
+                    <TextBlock Text="跳到指定页" Style="{StaticResource SectionTitleText}"/>
+                    <TextBlock x:Name="PageJumpRangeText" Foreground="{DynamicResource TextSecondaryBrush}"
+                               Margin="0,14,0,6" TextWrapping="Wrap"/>
+                    <TextBox x:Name="PageJumpInput" Style="{StaticResource NovelSpacingInput}"
+                             Width="Auto" MinHeight="34" MaxLength="0" TextAlignment="Left"
+                             KeyboardNavigation.TabIndex="0" AutomationProperties.Name="目标页码"
+                             AutomationProperties.LabeledBy="{Binding ElementName=PageJumpRangeText}"/>
+                    <TextBlock x:Name="PageJumpErrorText" Foreground="{DynamicResource DangerBrush}"
+                               TextWrapping="Wrap" Visibility="Collapsed" Margin="0,8,0,0"
+                               AutomationProperties.LiveSetting="Polite"/>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
+                        <Button x:Name="PageJumpConfirmButton" Content="跳转" Style="{StaticResource AccentButton}"
+                                Click="PageJumpConfirmButton_Click" IsEnabled="False" MinWidth="72"
+                                KeyboardNavigation.TabIndex="1" AutomationProperties.Name="跳转到目标页码"/>
+                        <Button x:Name="PageJumpCancelButton" Content="取消" Style="{StaticResource BaseButton}"
+                                Click="PageJumpCancelButton_Click" MinWidth="72" Margin="8,0,0,0"
+                                KeyboardNavigation.TabIndex="2" AutomationProperties.Name="取消页码跳转"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
         </Border>
     </Grid>
 </Window>

@@ -90,6 +90,7 @@ public partial class ReaderWindow : Window
         _fromStart = fromStart;
         InitializeComponent();
         InstallNovelManualInputHandlers();
+        InstallComicPageJumpCommand();
 
         _saveTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         _saveTimer.Tick += (_, _) => SaveNow();
@@ -462,6 +463,7 @@ public partial class ReaderWindow : Window
         if (!IsLoaded) return;
         var rb = (RadioButton)sender;
         if (rb.IsChecked != true) return;
+        CloseComicPageJump();
         switch ((string)rb.Tag)
         {
             case "webtoon": ShowWebtoon(); break;
@@ -2101,6 +2103,7 @@ public partial class ReaderWindow : Window
 
     private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
     {
+        CloseComicPageJump(restoreFocus: false);
         CancelDoubleNavigation();
         _webtoonEntryVersion++;
         CloseNovelSearch();
@@ -2173,6 +2176,7 @@ public partial class ReaderWindow : Window
 
     private void ToggleBars()
     {
+        if (IsComicPageJumpOpen) return;
         _barsVisible = !_barsVisible;
         TopBar.Visibility = _barsVisible ? Visibility.Visible : Visibility.Collapsed;
         BottomBar.Visibility = _barsVisible ? Visibility.Visible : Visibility.Collapsed;
@@ -2180,6 +2184,7 @@ public partial class ReaderWindow : Window
 
     private void Window_PreviewMouseMove(object sender, MouseEventArgs e)
     {
+        if (IsComicPageJumpOpen) return;
         if (!App.Settings.AutoHideBars) return;
         if (!_barsVisible) return;
         (_hideBarsTimer ??= new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) }).Stop();
@@ -2191,13 +2196,18 @@ public partial class ReaderWindow : Window
     private void HideBars_Tick(object? sender, EventArgs e)
     {
         if (_hideBarsTimer is not null) _hideBarsTimer.Stop();
-        if (_mode == "novel") return;
+        if (_mode == "novel" || IsComicPageJumpOpen) return;
         if (_barsVisible && !IsMouseOver)
             ToggleBars();
     }
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (IsComicPageJumpOpen)
+        {
+            PageJump_PreviewKeyDown(e);
+            return; // Text editing and Ctrl+G routing must precede reading shortcuts.
+        }
         if (e.Key == Key.F && Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
         {
             if (_interactionReady && _mode == "novel") OpenNovelSearch();
@@ -2340,6 +2350,7 @@ public partial class ReaderWindow : Window
         BookmarkButton.IsEnabled = positionReady && (_book.Type != BookType.Comic || _comicPresentation is not null);
         NovelSearchButton.IsEnabled = ready;
         ProgressSlider.IsEnabled = positionReady;
+        UpdateComicPageJumpAvailability();
     }
 
     private void ProgressSlider_PreviewMouseDown(object sender, MouseButtonEventArgs e)
