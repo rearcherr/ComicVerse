@@ -8,8 +8,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <AssemblyName>ComicVerse</AssemblyName>
-    <!-- 版本号：CI 发布时用 `-p:Version=<tag>` 覆盖，保证制品版本与标签一致 -->
-    <Version>1.3.2</Version>
+    <!-- 候选 CI 从此处读取版本；最终交付使用独立 QA 通过的同一制品。 -->
+    <Version>1.4.0</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\appicon.ico</ApplicationIcon>
