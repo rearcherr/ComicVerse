@@ -31,3 +31,23 @@ Windows 测试只通过现有隔离 runner 和实际 App --smoke；不操作用�
 架构报告已确认三文件复用方案可行。TA-B01 条漫以视口到达而非图片解码提交的历史边界，已由PRD明确定义：本轮坏图保成功位置合同限定单/双页，条漫按真实offset验收，不扩大为三模式解码保护宣传。该静态风险未实际复现，保留后续稳定性调查，不改变现有标准；新入口引入的回归仍为阻塞。
 
 17:05 生产实现三文件冻结。桌面与leader完成XML语法/事件接线/差异空白检查，tech_architect非作者静态复核通过，无生产阻塞缺陷。其TA-R01要求区分Ctrl+G绑定/命令验证与OS组合键注入（本轮不接管桌面）；TA-R02新入口pending证据由独立QA夹具补齐。当前尚无本轮运行PASS；不以静态复核代替构建或最终QA。
+
+## 候选 rc1
+
+- v1.4.0 源码提交 `bfc7da90a9c2d8df79050068ed2030793d88eee0`，分支 `codex/optimize-reading-reliability`。独立QA补齐pending覆盖、非法草稿不撤已有请求、原始意图跨模式、pending关闭、30页直达17、PDF三切片及小说入口禁用后冻结夹具。
+- [CI 43837234757](https://github.com/rearcherr/ComicVerse/actions/runs/43837234757) 与 [候选 43837235527](https://github.com/rearcherr/ComicVerse/actions/runs/43837235527)，attempt1，均明确绑定上述commit。首次检查编译阶段成功，运行检查进行中。
+- 原始Git源码归档 `artifacts/opt-01-candidate/source-bfc7da9.zip`，SHA256 `D9584C886CED9696D99B08822D0DCB5D97D5ECEDA5A504F9045C54588830FD70`；解压source用于逐项匹配云端LF源码manifest。构建/测试输入冻结后不变；control/run/独立验收结果可在最终文档提交中更新，不能改变被验收产品字节。
+
+两条云流水线最终均SUCCESS，候选90项输入manifest已上传。下载时核对GitHub artifact摘要：候选 `3D77D8D4798DB2B1866318170A82B05A581B7CEE37C104B95693ABA40DC1C830`，证据 `D2062A2113B5F0F3B31B1F3DB4FF313DF17A83ED783076FB3E6625A315C3155C`。同包EXE `598D5FFB5457F912D3C9BB07EB838405A39040A89540839D41AE1C992258FB0C`，便携ZIP `BD57370801722522C7B669AC4D3A0D2FF1D13A8E2567E7B04AC6897D18219EB8`，manifest自身 `1FDAAA2511C8AC8DDF4401A19A5F1A8B0300202A7D1BEF59E11BEBB2612D6E3F`。
+
+独立QA在 `artifacts/opt-01-qa/final-43837235527-1/` 新目录自行核验与解包；前置完整性719项通过、555个快照文件。实际同一EXE本地full smoke于17:20:43完成，121.49秒exit0、未超时。异常退出反例、前后哈希及正式放行仍待QA最终签发；暂不替换publish。
+
+## 最终放行与交付
+
+上述待办门禁随后全部闭环：QA正式签发PASS、无未决阻塞。新入口60/60，旧logic31/31、可靠性72/72及完整适用回归通过；dispatcher/task两个异常反例均准确exit1、未超时。17张最终截图与日志逐项复核；后置完整性1275项通过，555项冻结文件零差异。详情见 [独立QA](qa-report.md)，不将开发自测或云端重建包混充本机同制品验收。
+
+2026-11-16 17:27:30，leader将获批bundle全部13个文件复制到 `publish/`，EXE固定位置 `publish/ComicVerse.exe`，同一便携ZIP复制到 `dist/ComicVerse-Portable-v1.4.0-win-x64.zip`；未重建。leader逐项字节核验通过；独立QA随后48项交付后只读核验PASS，正式版本/尺寸/哈希、13文件完整性及ZIP内部材料均一致，无额外版本子目录。
+
+交付EXE和ZIP仍为本轮rc1首表哈希，候选源码仍为bfc7da9。冻结后只更新README及OPC执行/结果文档（PRD仅状态更新，验收合同未改）；源码、测试、工具、workflow、包内使用说明和样例的差异检查为空。生产候选一次通过，QA产品修复轮数0。
+
+本轮单项需求DONE，完成研究证据复用、需求、交互、实现、非作者复核、最终包独立QA、同制品交付与效果评估；真实用户价值仍待反馈，见 [evaluation.md](evaluation.md)。控制状态回standby、清空active_cycle、关闭本轮开发授权；不自动开启新轮次。源码在优化分支供PR审阅，本轮未合并主分支或创建公开Release。

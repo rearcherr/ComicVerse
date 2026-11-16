@@ -2,12 +2,12 @@
   "schema_version": 1,
   "updated_on": "2026-11-16",
   "timezone": "Asia/Hong_Kong",
-  "execution_state": "candidate",
-  "activation_required": false,
+  "execution_state": "standby",
+  "activation_required": true,
   "mode": "single_cycle",
   "setup_scope": "authorized_product_iteration",
-  "active_cycle": "CV-20261116-OPT-01",
-  "last_outcome": "in_progress",
+  "active_cycle": null,
+  "last_outcome": "delivered",
   "team": {
     "leader": "leader",
     "configured_max_subagents": 8,
@@ -32,7 +32,7 @@
     "max_active_release_candidates": 1
   },
   "authorization": {
-    "product_development_started": true,
+    "product_development_started": false,
     "scheduled_execution_enabled": false,
     "user_desktop_takeover_allowed": false,
     "remote_publish_policy": "follow_explicit_conversation_authorization",
@@ -58,26 +58,47 @@
       "outcome": "merged_and_ci_pass",
       "record": "docs/opc/cycles/CV-20261116-CI/run.md",
       "merge_commit": "37ade220ca356f1cee40150b9ef7dc6335b91de2"
+    },
+    {
+      "cycle": "CV-20261116-OPT-01",
+      "outcome": "delivered",
+      "record": "docs/opc/cycles/CV-20261116-OPT-01/run.md",
+      "version": "1.4.0",
+      "candidate_commit": "bfc7da90a9c2d8df79050068ed2030793d88eee0",
+      "candidate_run": 43837235527
     }
   ],
   "last_run": {
-    "cycle": "CV-20261103-02",
-    "started_at": "2026-11-03T01:00:48.8854634+08:00",
-    "deadline": "2026-11-03T03:00:48.8854634+08:00",
+    "cycle": "CV-20261116-OPT-01",
+    "started_at": "2026-11-16T16:50:15.5527354+08:00",
     "max_cycles": 1,
-    "max_requirements": 1,
     "time_budget_minutes": 120,
+    "max_requirements": 3,
     "max_qa_repair_rounds": 2,
-    "qa_repair_rounds_used": 1,
-    "scope": "Repair v1.3.2 blocked explicit navigation intent regression; preserve successful progress and PAX fixes; final identical-artifact local delivery",
-    "record": "docs/opc/cycles/CV-20261103-02/run.md",
-    "progress": "Complete: final independent QA and identical-artifact delivery verification PASS; local v1.3.2 delivered; real user value pending feedback; no remote publication.",
-    "ended_at": "2026-11-03T01:29:27.9003755+08:00",
-    "elapsed_minutes": 28.67,
+    "scope": "REQ-CV-20261116-OPT-01-01: precise comic page navigation (v1.4.0)",
+    "record": "docs/opc/cycles/CV-20261116-OPT-01/run.md",
+    "baseline": "37ade220ca356f1cee40150b9ef7dc6335b91de2",
+    "deadline": "2026-11-16T18:50:15.5527354+08:00",
+    "progress": "Complete: v1.4.0 final independent QA PASS; same EXE/ZIP delivered; post-delivery 48 checks PASS. Branch prepared for review; real user value pending feedback.",
+    "candidate": {
+      "version": "1.4.0",
+      "rc": 1,
+      "commit": "bfc7da90a9c2d8df79050068ed2030793d88eee0",
+      "ci_run": 43837234757,
+      "candidate_run": 43837235527,
+      "attempt": 1,
+      "source_archive_sha256": "D9584C886CED9696D99B08822D0DCB5D97D5ECEDA5A504F9045C54588830FD70",
+      "exe_sha256": "598D5FFB5457F912D3C9BB07EB838405A39040A89540839D41AE1C992258FB0C",
+      "zip_sha256": "BD57370801722522C7B669AC4D3A0D2FF1D13A8E2567E7B04AC6897D18219EB8"
+    },
+    "zip_sha256": "BD57370801722522C7B669AC4D3A0D2FF1D13A8E2567E7B04AC6897D18219EB8",
+    "ended_at": "2026-11-16T17:29:43.2781794+08:00",
+    "exe_sha256": "598D5FFB5457F912D3C9BB07EB838405A39040A89540839D41AE1C992258FB0C",
+    "branch": "codex/optimize-reading-reliability",
     "outcome": "delivered",
-    "delivered_version": "1.3.2",
-    "exe_sha256": "35AE398E9470B9AF639129C2AE7AF11B604422241F72768104A8DD74CD6AC20E",
-    "zip_sha256": "3AF65A824948D64632CA003DCD3691795B6CFA7CC9C77FE251C50418CFDE5355"
+    "delivered_version": "1.4.0",
+    "qa_repair_rounds_used": 0,
+    "elapsed_minutes": 39.47
   },
   "active_release": {
     "version": "1.3.2",
@@ -91,17 +112,5 @@
     "approved_zip_sha256": "3AF65A824948D64632CA003DCD3691795B6CFA7CC9C77FE251C50418CFDE5355",
     "progress": "Independent publishing candidate PASS; approved same EXE full smoke112.19s/exit0, new freeze and assets match. Preparing Git commit/push; cloud CI and remote draft verification pending."
   },
-  "current_run": {
-    "cycle": "CV-20261116-OPT-01",
-    "started_at": "2026-11-16T16:50:15.5527354+08:00",
-    "max_cycles": 1,
-    "time_budget_minutes": 120,
-    "max_requirements": 3,
-    "max_qa_repair_rounds": 2,
-    "scope": "REQ-CV-20261116-OPT-01-01: precise comic page navigation (v1.4.0)",
-    "record": "docs/opc/cycles/CV-20261116-OPT-01/run.md",
-    "baseline": "37ade220ca356f1cee40150b9ef7dc6335b91de2",
-    "deadline": "2026-11-16T18:50:15.5527354+08:00",
-    "progress": "Production static review passed; freezing final acceptance fixture and cloud candidate inputs."
-  }
+  "current_run": null
 }
