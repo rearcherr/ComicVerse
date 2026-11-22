@@ -1,9 +1,12 @@
 # OPC 待办与候选方向
 
+2026-11-22 更新：Windows 免安装版 v1.5.0 的应用内检查和点击升级已通过独立 QA，并交付到原位置。GitHub 公开 Release 仍为 v1.4.0。见 [在线升级轮次](cycles/CV-20261122-UPDATE-01/run.md)。
+
 更新时间：2026-11-16（Asia/Shanghai）。`CV-20261116-OPT-01` 已完成漫画精确页码跳转，v1.4.0 最终同包独立 QA PASS，并交付 `publish/ComicVerse.exe` 与 `dist/ComicVerse-Portable-v1.4.0-win-x64.zip`。本轮结束回待命，不自动开启下一轮；历史交付与失败记录保留。
 
 |需求／缺陷|当前状态|完成证据|
 |---|---|---|
+|REQ-CV-20261122-UPDATE-01 在线升级|DONE|[独立 QA](cycles/CV-20261122-UPDATE-01/qa-report.md)：46 项在线升级检查、真实跨版本替换和失败恢复、145 项交付核验通过|
 |REQ-CV-20261116-OPT-01-01 漫画精确页码跳转|DONE|[独立QA](cycles/CV-20261116-OPT-01/qa-report.md)：新入口60/60、同包完整回归和异常退出门禁PASS；[轮次与同制品交付](cycles/CV-20261116-OPT-01/run.md)|
 |REQ-CV-20261103-01-01 失败导航保留成功进度|DONE|在后续rc2完整回归并同制品交付；首轮FAIL仍保留|
 |REQ-CV-20261103-01-02 PAX长路径TAR完整索引|DONE|同一正式v1.3.2完成PAX及完整旧回归，未单独交付未验收包|

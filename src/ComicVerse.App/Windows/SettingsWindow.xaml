@@ -11,6 +11,13 @@
         <StackPanel Margin="24,20,24,24">
             <TextBlock Style="{StaticResource PageTitleText}" Text="设置"/>
 
+            <TextBlock Style="{StaticResource SectionTitleText}" Text="软件更新" Margin="0,24,0,10"/>
+            <DockPanel LastChildFill="True">
+                <Button DockPanel.Dock="Right" Style="{StaticResource BaseButton}" Content="检查更新"
+                        Click="CheckUpdates_Click" Padding="12,5"/>
+                <TextBlock x:Name="CurrentVersionText" Style="{StaticResource BodyText}" VerticalAlignment="Center"/>
+            </DockPanel>
+
             <TextBlock Style="{StaticResource SectionTitleText}" Text="外观" Margin="0,24,0,10"/>
             <Grid>
                 <Grid.ColumnDefinitions>

@@ -3,6 +3,8 @@
 基于 PRD（`ComicVerse-PRD-v1.0.md`）实现的阅读器：Windows 桌面端（C# / .NET 10 / WPF），
 核心逻辑集中在 `src/ComicVerse.Core`。
 
+自 v1.5.0 起，Windows x64 免安装版支持在线升级。在书架打开「设置 → 检查更新」，发现新版后点击「更新并重启」。程序从 [ComicVerse Releases](https://github.com/rearcherr/ComicVerse/releases/latest) 下载并核验 EXE，在保存阅读进度后重新启动。首次使用需要手动安装支持在线更新的版本。
+
 ## 功能一览
 
 ### 书架（书库）

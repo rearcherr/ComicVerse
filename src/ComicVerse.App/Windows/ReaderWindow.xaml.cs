@@ -1681,12 +1681,16 @@ public partial class ReaderWindow : Window
         return true;
     }
 
-    private void FlushNovelSettingsIfDirty(bool commitSpacingDrafts = false)
+    private void FlushNovelSettingsIfDirty(bool commitSpacingDrafts = false, bool requirePersistence = false)
     {
         if (commitSpacingDrafts) CommitNovelSpacingDrafts();
         if (!_novelSettingsLoaded || !_novelSettingsDirty || _novel is null || _closed) return;
-        if (!ReadNovelSettingsFromUi() || !EnsureBookIdCurrent()) return;
-        if (!App.Settings.SaveNovelSettingsForBook(_book.Id, _novelSettings)) return;
+        if (!EnsureBookIdCurrent(requirePersistence)) return;
+        if (!ReadNovelSettingsFromUi() || !App.Settings.SaveNovelSettingsForBook(_book.Id, _novelSettings))
+        {
+            if (requirePersistence) throw new IOException("无法保存小说排版，请稍后重试更新。");
+            return;
+        }
         _novelSettingsDirty = false;
         _rebuildTimer?.Stop();
     }
@@ -1954,13 +1958,13 @@ public partial class ReaderWindow : Window
         _saveTimer.Start();
     }
 
-    private void SaveNow()
+    private void SaveNow(bool requirePersistence = false)
     {
         SynchronizeNovelPageFactsNow();
         _saveTimer.Stop();
         if (_closed || !_interactionReady || _book.Id <= 0) return;
         // 书可能已在书架里被"移出"或重建：重新绑定到现存的行，否则进度会静默地永远存不进去
-        if (!EnsureBookIdCurrent()) return;
+        if (!EnsureBookIdCurrent(requirePersistence)) return;
         int page = _page;
         int chapter = 0;
         double scroll = 0;
@@ -2005,6 +2009,7 @@ public partial class ReaderWindow : Window
         catch (Exception ex)
         {
             Log.Error("保存进度失败", ex);
+            if (requirePersistence) throw;
         }
     }
 
@@ -2012,7 +2017,7 @@ public partial class ReaderWindow : Window
     /// 校验 <see cref="_book"/>.Id 仍指向库中存在的行；若已被删除/重建，则按路径重新绑定。
     /// 返回 false 表示这本书确实已不在书架中，本次不保存（应停止后续自动保存）。
     /// </summary>
-    private bool EnsureBookIdCurrent()
+    private bool EnsureBookIdCurrent(bool requirePersistence = false)
     {
         try
         {
@@ -2025,6 +2030,7 @@ public partial class ReaderWindow : Window
         catch (Exception ex)
         {
             Log.Error("重新绑定书库条目失败", ex);
+            if (requirePersistence) throw;
             return false;
         }
     }
@@ -2100,6 +2106,12 @@ public partial class ReaderWindow : Window
     #endregion
 
     #region 通用
+
+    internal void SaveBeforeUpdate()
+    {
+        FlushNovelSettingsIfDirty(commitSpacingDrafts: true, requirePersistence: true);
+        SaveNow(requirePersistence: true);
+    }
 
     private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
     {

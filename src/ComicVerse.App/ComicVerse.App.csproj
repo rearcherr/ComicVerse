@@ -9,7 +9,7 @@
     <UseWPF>true</UseWPF>
     <AssemblyName>ComicVerse</AssemblyName>
     <!-- 候选 CI 从此处读取版本；最终交付使用独立 QA 通过的同一制品。 -->
-    <Version>1.4.0</Version>
+    <Version>1.5.0</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\appicon.ico</ApplicationIcon>

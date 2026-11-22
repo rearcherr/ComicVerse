@@ -5,6 +5,7 @@ using System.Windows;
 using ComicVerse.Core;
 using ComicVerse.Core.Services;
 using ComicVerse.App.Windows;
+using ComicVerse.App.Updates;
 
 namespace ComicVerse.App;
 
@@ -34,12 +35,29 @@ public partial class App : Application
 
         try
         {
+            if (e.Args.FirstOrDefault() == AppUpdateInstaller.ApplyArgument)
+            {
+                ShutdownMode = ShutdownMode.OnExplicitShutdown;
+                var updateDataDir = Environment.GetEnvironmentVariable("COMICVERSE_DATA_DIR");
+                if (updateDataDir is not null && Path.IsPathFullyQualified(updateDataDir) && Directory.Exists(updateDataDir))
+                    Log.Configure(Path.Combine(updateDataDir, "logs"));
+                await AppUpdateInstaller.ApplyAsync(e.Args);
+                Shutdown(0);
+                return;
+            }
             await StartupCoreAsync(e);
         }
         catch (Exception ex)
         {
             // OnStartup 是 async void，异常不会被任何调用方捕获，必须在这里自己收口。
             Log.Error("启动失败", ex);
+            if (e.Args.FirstOrDefault() == AppUpdateInstaller.ApplyArgument)
+            {
+                if (IsSmokeProcess) RecordSmokeFailure(ex);
+                else MessageBox.Show(ex.Message, "ComicVerse 更新未完成", MessageBoxButton.OK, MessageBoxImage.Warning);
+                Shutdown(1);
+                return;
+            }
             if (e.Args.Contains("--smoke"))
             {
                 // 无人值守自检失败必须立即退出，不能弹出对话框让 CI 一直等待。
@@ -130,7 +148,8 @@ public partial class App : Application
 
         ThemeService.Apply(Settings.Theme);
 
-        if (e.Args.Contains("--smoke"))
+        bool afterUpdate = e.Args.FirstOrDefault() == AppUpdateInstaller.RestartArgument;
+        if (IsSmokeProcess && !afterUpdate)
         {
             ShutdownMode = ShutdownMode.OnExplicitShutdown;
             int code = await SmokeTest.RunAsync(e.Args);
@@ -141,7 +160,7 @@ public partial class App : Application
         var splash = new SplashWindow();
         splash.Show();
 
-        string? fileArg = e.Args.FirstOrDefault(a => File.Exists(a));
+        string? fileArg = afterUpdate ? null : e.Args.FirstOrDefault(File.Exists);
         var main = new MainWindow();
         MainWindow = main;
         main.Show();
@@ -149,6 +168,19 @@ public partial class App : Application
             main.OpenBookByPath(fileArg);
 
         splash.Close();
+        if (afterUpdate) await Dispatcher.InvokeAsync(() =>
+        {
+            try { AppUpdateInstaller.CompleteRestart(e.Args, main); }
+            catch (Exception ex) { Log.Error("确认更新启动结果失败", ex); }
+        }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+    }
+
+    internal bool IsExitingForUpdate { get; private set; }
+
+    internal void ExitForUpdate()
+    {
+        IsExitingForUpdate = true;
+        Shutdown();
     }
 
     protected override void OnExit(ExitEventArgs e)

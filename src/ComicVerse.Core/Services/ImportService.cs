@@ -34,6 +34,8 @@ public sealed class ImportService
         _library = library;
     }
 
+    public bool IsImporting => _importGate.CurrentCount == 0;
+
     public async Task<ImportResult> ImportAsync(IEnumerable<string> paths, IProgress<ImportProgress>? progress = null, CancellationToken ct = default)
     {
         await _importGate.WaitAsync(ct).ConfigureAwait(false);

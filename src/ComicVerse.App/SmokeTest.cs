@@ -60,6 +60,14 @@ public static partial class SmokeTest
         await Task.Delay(900);
         main.Refresh();
         bool shelfEmptyOk = main.ShelfCount == 0 && main.EmptyHeadingText == "书架还是空的";
+        if (args.Contains("--online-update-only") || args.Contains("--online-update-install-fixture"))
+        {
+            var update = await CheckOnlineUpdateAsync(outDir, args);
+            File.WriteAllText(Path.Combine(outDir, "online-update-summary.txt"), update.Detail);
+            Console.WriteLine(update.Detail);
+            main.Close();
+            return update.Ok ? 0 : 1;
+        }
         if (args.Contains("--comic-page-jump-only"))
         {
             var pageJump = await CheckComicPageJumpAsync(outDir);
@@ -805,6 +813,7 @@ public static partial class SmokeTest
         var logicAudit = await CheckLogicAuditAsync(main, outDir);
         var opcReliability = await CheckOpcReliabilityAsync(outDir);
         var comicPageJump = await CheckComicPageJumpAsync(outDir);
+        var onlineUpdate = await CheckOnlineUpdateAsync(outDir, args);
         main.Close();
 
         string summary =
@@ -836,6 +845,7 @@ public static partial class SmokeTest
             $"独立QA：整体逻辑={logicAudit.Ok} — {logicAudit.Detail}\n" +
             $"独立QA：OPC可靠性={opcReliability.Ok} — {opcReliability.Detail}\n" +
             $"独立QA：漫画页码跳转={comicPageJump.Ok} — {comicPageJump.Detail}\n" +
+            $"独立QA：在线升级={onlineUpdate.Ok} — {onlineUpdate.Detail}\n" +
             $"不等高漫画翻页切条漫保持页码: {unequalWebtoonOk}\n" +
             $"条漫页间接缝检测（背景色行数）: {webtoonSeamRows}\n" +
             $"条漫鼠标拖拽滑动: {webtoonDragOk}\n" +
@@ -862,7 +872,7 @@ public static partial class SmokeTest
                shortNovelCompleteOk &&
                novelPreferences.Formatting && novelPreferences.Wheel &&
                novelExpansion.Spacing && novelExpansion.Search &&
-               logicAudit.Ok && opcReliability.Ok && comicPageJump.Ok &&
+               logicAudit.Ok && opcReliability.Ok && comicPageJump.Ok && onlineUpdate.Ok &&
                unequalWebtoonOk &&
                lightHeaderOk && shelfRefreshOk && webtoonSeamRows == 0 &&
                webtoonDragOk && webtoonClickReleaseOk &&

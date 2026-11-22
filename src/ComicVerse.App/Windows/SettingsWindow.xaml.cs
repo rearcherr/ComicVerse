@@ -11,8 +11,12 @@ public partial class SettingsWindow : Window
     public SettingsWindow()
     {
         InitializeComponent();
+        CurrentVersionText.Text = $"当前版本 v{App.AppVersion}";
         Loaded += (_, _) => LoadValues();
     }
+
+    private void CheckUpdates_Click(object sender, RoutedEventArgs e)
+        => new UpdateWindow { Owner = this }.ShowDialog();
 
     private void LoadValues()
     {

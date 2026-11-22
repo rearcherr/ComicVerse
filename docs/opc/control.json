@@ -66,39 +66,35 @@
       "version": "1.4.0",
       "candidate_commit": "bfc7da90a9c2d8df79050068ed2030793d88eee0",
       "candidate_run": 43837235527
+    },
+    {
+      "cycle": "CV-20261122-UPDATE-01",
+      "outcome": "delivered",
+      "version": "1.5.0",
+      "record": "docs/opc/cycles/CV-20261122-UPDATE-01/run.md"
     }
   ],
   "last_run": {
-    "cycle": "CV-20261116-OPT-01",
-    "started_at": "2026-11-16T16:50:15.5527354+08:00",
+    "cycle": "CV-20261122-UPDATE-01",
+    "started_at": "2026-11-22T21:07:45.7718432+08:00",
+    "baseline": "528d203",
     "max_cycles": 1,
     "time_budget_minutes": 120,
-    "max_requirements": 3,
     "max_qa_repair_rounds": 2,
-    "scope": "REQ-CV-20261116-OPT-01-01: precise comic page navigation (v1.4.0)",
-    "record": "docs/opc/cycles/CV-20261116-OPT-01/run.md",
-    "baseline": "37ade220ca356f1cee40150b9ef7dc6335b91de2",
-    "deadline": "2026-11-16T18:50:15.5527354+08:00",
-    "progress": "Complete: v1.4.0 final independent QA PASS; same EXE/ZIP delivered; post-delivery 48 checks PASS. Branch prepared for review; real user value pending feedback.",
+    "max_requirements": 3,
+    "scope": "In-app GitHub portable EXE update and restart",
+    "record": "docs/opc/cycles/CV-20261122-UPDATE-01/run.md",
     "candidate": {
-      "version": "1.4.0",
+      "version": "1.5.0",
       "rc": 1,
-      "commit": "bfc7da90a9c2d8df79050068ed2030793d88eee0",
-      "ci_run": 43837234757,
-      "candidate_run": 43837235527,
-      "attempt": 1,
-      "source_archive_sha256": "D9584C886CED9696D99B08822D0DCB5D97D5ECEDA5A504F9045C54588830FD70",
-      "exe_sha256": "598D5FFB5457F912D3C9BB07EB838405A39040A89540839D41AE1C992258FB0C",
-      "zip_sha256": "BD57370801722522C7B669AC4D3A0D2FF1D13A8E2567E7B04AC6897D18219EB8"
+      "exe_sha256": "71451621B9630C969B25007807B5D594E8F7D8FEA415902FCEC0A89B01A09B93",
+      "zip_sha256": "F52F175B0D878D7A01396C3D87FB868BFC897715A88701EB593ED9EC89AD9AD8",
+      "manifest_sha256": "2671F0D0AF576B816D89B33E76965E64A4CDC782481AFD8CEDBB06110757BBAA"
     },
-    "zip_sha256": "BD57370801722522C7B669AC4D3A0D2FF1D13A8E2567E7B04AC6897D18219EB8",
-    "ended_at": "2026-11-16T17:29:43.2781794+08:00",
-    "exe_sha256": "598D5FFB5457F912D3C9BB07EB838405A39040A89540839D41AE1C992258FB0C",
-    "branch": "codex/optimize-reading-reliability",
+    "ended_at": "2026-11-22T21:34:20.8211697+08:00",
     "outcome": "delivered",
-    "delivered_version": "1.4.0",
-    "qa_repair_rounds_used": 0,
-    "elapsed_minutes": 39.47
+    "delivered_version": "1.5.0",
+    "independent_delivery_checks": 145
   },
   "active_release": null,
   "previous_release_attempt": {
