@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_on": "2026-11-16",
+  "updated_on": "2026-11-22",
   "timezone": "Asia/Hong_Kong",
   "execution_state": "standby",
   "activation_required": true,
@@ -100,7 +100,8 @@
     "qa_repair_rounds_used": 0,
     "elapsed_minutes": 39.47
   },
-  "active_release": {
+  "active_release": null,
+  "previous_release_attempt": {
     "version": "1.3.2",
     "started_at": "2026-11-03T01:37:00.4791939+08:00",
     "authorization": "User explicitly requested 上传github吧",
@@ -110,7 +111,17 @@
     "record": "docs/opc/releases/v1.3.2/run.md",
     "approved_exe_sha256": "35AE398E9470B9AF639129C2AE7AF11B604422241F72768104A8DD74CD6AC20E",
     "approved_zip_sha256": "3AF65A824948D64632CA003DCD3691795B6CFA7CC9C77FE251C50418CFDE5355",
-    "progress": "Independent publishing candidate PASS; approved same EXE full smoke112.19s/exit0, new freeze and assets match. Preparing Git commit/push; cloud CI and remote draft verification pending."
+    "progress": "Historical local candidate QA passed. Hosted CI 41495173260 failed during App smoke, and no v1.3.2 Release was created. The stream lifetime fix later landed in PR #2."
+  },
+  "last_release": {
+    "version": "1.4.0",
+    "tag": "v1.4.0",
+    "commit": "bfc7da90a9c2d8df79050068ed2030793d88eee0",
+    "candidate_run": 43837235527,
+    "release_id": 454449683,
+    "published_at": "2026-11-22T21:03:20+08:00",
+    "url": "https://github.com/rearcherr/ComicVerse/releases/tag/v1.4.0",
+    "record": "docs/opc/releases/v1.4.0/run.md"
   },
   "current_run": null
 }
